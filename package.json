@@ -1,22 +1,30 @@
 {
-  "name": "my-pi-extension",
+  "name": "pi-message-recall",
   "version": "0.1.0",
-  "description": "Starter template for building robust Pi extensions",
+  "description": "Pi extension for fast message recall across prior user messages",
   "keywords": [
     "pi-package",
     "pi-extension",
-    "template"
+    "message-recall",
+    "history"
   ],
+  "author": "ayagmar",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ayagmar/pi-message-recall.git"
+  },
+  "homepage": "https://github.com/ayagmar/pi-message-recall#readme",
+  "bugs": {
+    "url": "https://github.com/ayagmar/pi-message-recall/issues"
+  },
   "type": "module",
   "main": "./src/index.ts",
   "files": [
     "src/",
-    "starters/",
-    "scripts/",
-    "README.md"
+    "README.md",
+    "LICENSE"
   ],
   "scripts": {
-    "setup-template": "node ./scripts/setup.mjs",
     "lint": "biome lint . --error-on-warnings",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
@@ -29,18 +37,14 @@
   "pi": {
     "extensions": [
       "./src/index.ts"
-    ],
-    "image": "https://placehold.co/1200x630/png?text=My+Pi+Extension"
+    ]
   },
   "peerDependencies": {
-    "@mariozechner/pi-ai": "*",
     "@mariozechner/pi-coding-agent": "*",
-    "@mariozechner/pi-tui": "*",
-    "@sinclair/typebox": "*"
+    "@mariozechner/pi-tui": "*"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.4.9",
-    "@mariozechner/pi-ai": "^0.63.1",
     "@mariozechner/pi-coding-agent": "^0.63.1",
     "@mariozechner/pi-tui": "^0.63.1",
     "@sinclair/typebox": "^0.34.48",

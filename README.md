@@ -1,194 +1,148 @@
-# Pi Extension Template
+# pi-message-recall
 
-A practical starter for building Pi extensions that are easy to ship, test, and maintain.
+`pi-message-recall` adds fast recall of previous **user-entered text messages** in Pi.
 
-## What you get
+It is built for the common flow: open a picker, search your old prompts, drop one back into the editor, and keep editing from there.
 
-- Strict TypeScript + Biome
-- Unit tests + smoke test
-- GitHub Actions CI with individual step reporting
-- A minimal default extension in `src/index.ts`
-- Multiple architecture starters in `starters/`
-- Pi 0.63.x-compatible extension patterns
+## Features
 
-Biome is configured to keep the previous template guardrails around explicit `any`, type-only imports, floating promises, unused variables, and namespace imports, while also adding unused-import, CommonJS, and `node:` builtin import checks.
+- `Alt+R` shortcut by default
+- `/recall` fallback command
+- fills the editor without auto-sending
+- restores the previous text draft on cancel
+- searches prior user text across persisted Pi sessions
+- includes the current live session state, not just old session files
+- quick scope switching in the picker with `Tab`
+- configurable default scope and shortcut via `/recall settings`
+- progressive loading, paginated results, and capped match windows for large histories
 
-## Quick start
+## Install
 
-1. Click **Use this template** on GitHub.
-2. Clone your new repo.
-3. Install dependencies.
-
-```bash
-pnpm install
-```
-
-4. Run the bootstrap script once.
+From git:
 
 ```bash
-pnpm run setup-template
+pi install git:github.com/ayagmar/pi-message-recall
 ```
 
-This updates `src/constants.ts`, `package.json`, and starter files with your extension name.
-
-5. Finish the rename pass manually.
-
-## Post-clone rename and cleanup
-
-`setup-template` handles the common identifiers, but it does **not** finish the repo for you.
-Before your first real release, update or remove the template leftovers below.
-
-### Rename checklist
-
-- Rename the GitHub repo / local directory to your real project name.
-- Review `package.json`:
-  - `name`
-  - `description`
-  - `pi.image` / `pi.video`
-- Review `src/constants.ts`:
-  - `EXTENSION_NAME`
-  - `EXTENSION_COMMAND`
-  - `TOOL_NAME`
-  - `STATE_ENTRY_TYPE`
-- Update `README.md` title and usage examples if they still describe a template.
-- Update `LICENSE` with your actual name or organization.
-
-### Template-only files and scripts
-
-After you finish renaming, these are usually not meant to ship forever:
-
-- `scripts/setup.mjs`
-- `pnpm run setup-template`
-- `.agents/skills/` (the repo-local bootstrap skill folder, if you no longer need it)
-
-Remove them once the extension has been renamed and you no longer need template bootstrapping.
-Also delete unused starter files and starter-specific tests before publishing a real extension package.
-
-## Repo-local bootstrap skill
-
-This template includes a repo-local skill at `.agents/skills/create-extension-repo`.
-
-Use `/skill:create-extension-repo` from this template repo to create a fresh GitHub repo with `gh repo create --template`, clone it locally, and remove the bootstrap skill folder from the generated repo so the child repo does not keep this template-only helper.
-
-## Verify the template
-
-Run the full check suite:
-
-```bash
-pnpm run check
-```
-
-## Load it in Pi
-
-For a quick smoke test:
+Or load the local repo during development:
 
 ```bash
 pi -e ./src/index.ts
 ```
 
-For normal development, prefer auto-discovery so `/reload` works:
+## Usage
 
-- `~/.pi/agent/extensions/` (global)
-- `.pi/extensions/` (project)
+Open recall from Pi with either:
 
-## Choose your extension pattern
+- `Alt+R`
+- `/recall`
 
-Not all Pi extensions need commands or tools. Pick a starter that matches your use case:
+You can also prefill the picker query:
 
-- `starters/event-only.ts` → listeners/interceptors/guards (`tool_call`, `tool_result`, shortcut)
-- `starters/tool-only.ts` → model-callable tools + result interception + custom rendering
-- `starters/command-only.ts` → slash command UX + a small interactive picker + shortcut
-- `starters/hybrid.ts` → command + tool + event hooks + shortcut
-- `starters/ui-only.ts` → status line, widget, custom dashboard via `ctx.ui.custom()`, shortcut
+```text
+/recall loading spinner
+```
 
-Replace the default `src/index.ts` with your chosen starter:
+### What happens
+
+1. The picker opens.
+2. Select a previous user message.
+3. The selected text is copied into the Pi editor.
+4. Nothing is sent automatically.
+
+If you cancel the picker, the previous **text draft** is restored.
+
+## Picker UX
+
+The picker opens as a centered native Pi overlay with:
+
+- a live search field
+- scope chips for `Project`, `Repo`, and `All`
+- a scrolling native selection list
+- a preview pane for the currently selected prompt
+- fixed-height results and preview sections so scrolling does not resize the overlay
+- loading, empty, and error states inline in the dialog
+
+Keyboard flow:
+
+- empty query shows recent messages first
+- typing filters recalled messages case-insensitively
+- quoted phrases work, for example: `"key hints" picker`
+- regex mode works with `re:<pattern>` or `re:/pattern/flags`
+- `Tab` cycles scope
+- `PgUp` / `PgDn` page through results
+- `Enter` fills the editor
+- `Esc` cancels
+
+## Scopes
+
+The picker supports:
+
+- **Project** — the current Pi session bucket / current working directory sessions
+- **Repo** — sessions whose Pi cwd lives under the current git root, when available
+- **All** — all persisted sessions Pi can list, plus the current project bucket
+
+If repo scope is not available in the current directory, the picker falls back cleanly to the configured default or `Project`.
+
+## Settings
+
+Open settings with:
+
+```text
+/recall settings
+```
+
+Current status is available with:
+
+```text
+/recall status
+```
+
+Settings are stored here:
+
+```text
+~/.pi/agent/extensions/pi-message-recall/settings.json
+```
+
+Today the settings are:
+
+- default scope
+- shortcut enabled / disabled
+- shortcut key
+
+Shortcut changes are saved and then applied through a clean Pi reload.
+
+### Shortcut behavior
+
+- default shortcut: `Alt+R`
+- `/recall` always remains available
+- `/recall` remains available even if the shortcut is disabled, invalid, or Pi refuses it on reload
+
+## Performance notes
+
+The picker is intentionally conservative for large histories:
+
+- scope loading is incremental
+- results are paginated
+- search only keeps a capped match window in memory for rendering
+- the UI does not try to render giant result sets at once
+
+## Limitations
+
+- recall is **text-only** in v1
+- old images and attachments are not recalled
+- cancelling restores the previous **text** draft only; Pi does not expose public APIs for restoring attachments in the editor
+- all-scope recall depends on Pi's public session listing APIs, so custom session storage setups may only be partially visible outside the current project bucket
+
+## Development
 
 ```bash
-cp starters/event-only.ts src/index.ts
+pnpm install
 pnpm run check
 ```
 
-If you copy a starter into `src/index.ts` **before** running `setup-template`, the copied file keeps the default `myext` names. Either:
-
-- Run `setup-template` first, then copy the starter
-- Or copy the starter first, then run setup and manually update names in `src/index.ts`
-
-## Install and manage with current Pi
-
-Pi has built-in package management now. Use these commands directly:
+Load locally in Pi:
 
 ```bash
-pi install ./relative/path/to/your-extension-repo
-pi install /absolute/path/to/your-extension-repo
-pi install git:github.com/yourusername/your-repo
-pi install npm:your-package-name
-
-pi remove npm:your-package-name
-pi update
-pi config
+pi -e ./src/index.ts
 ```
-
-If Pi is already running, use `/reload` after local changes.
-
-**Do not use `pi-extmgr` or `/extensions install`.** They are legacy workflow docs and are not needed on current Pi.
-
-## Customize
-
-The bootstrap script updates most identifiers automatically. To customize manually, review:
-
-### `src/constants.ts`
-
-- `EXTENSION_NAME`
-- `EXTENSION_COMMAND`
-- `TOOL_NAME`
-- `STATE_ENTRY_TYPE`
-
-### `package.json`
-
-- `name`
-- `description`
-- `pi.image` / `pi.video`
-
-### Custom tools on modern Pi
-
-If you add a model-callable tool, give it a `promptSnippet`. Current Pi only includes custom tools in the default `Available tools` prompt section when they opt in with `promptSnippet`.
-
-## Scripts
-
-```bash
-pnpm run setup-template
-pnpm run typecheck
-pnpm run test
-pnpm run smoke-test
-pnpm run lint
-pnpm run lint:fix
-pnpm run format
-pnpm run format:check
-pnpm run check
-```
-
-## Testing notes
-
-- `test/commands.test.ts`, `test/tool.test.ts`, `test/extension.test.ts` cover core template logic
-- `test/starters.test.ts` validates starter behavior patterns
-
-## Docs worth reading
-
-- [extensions.md](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/extensions.md)
-- [packages.md](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/packages.md)
-- [tui.md](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/tui.md)
-- [keybindings.md](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/keybindings.md)
-- [examples/extensions](https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent/examples/extensions)
-
-## Share your extension
-
-Add the `pi-package` keyword to `package.json` and publish to npm.
-
-For gallery previews, set `pi.image` or `pi.video` in `package.json`.
-See [packages.md](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/packages.md#gallery-metadata).
-
-Package gallery: [shittycodingagent.ai/packages](https://shittycodingagent.ai/packages)
-
-## License
-
-MIT
