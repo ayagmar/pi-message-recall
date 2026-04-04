@@ -18,10 +18,40 @@ It is built for the common flow: open a picker, search your old prompts, drop on
 
 ## Install
 
-From git:
+Install from npm:
+
+```bash
+pi install npm:pi-message-recall
+```
+
+Install from git:
 
 ```bash
 pi install git:github.com/ayagmar/pi-message-recall
+```
+
+Pin to a specific release tag:
+
+```bash
+pi install git:github.com/ayagmar/pi-message-recall@vX.Y.Z
+```
+
+Project-local install (writes to `.pi/settings.json`):
+
+```bash
+pi install -l npm:pi-message-recall
+```
+
+Install from a local checkout:
+
+```bash
+pi install /absolute/path/to/pi-message-recall
+```
+
+Then reload Pi:
+
+```text
+/reload
 ```
 
 Or load the local repo during development:
