@@ -52,10 +52,9 @@ export async function openRecallPicker(
         },
         {
           onDone: (value) => {
-            if (value) {
-              ctx.ui.setEditorText(value.text);
-            } else {
-              ctx.ui.setEditorText(options.previousDraft);
+            const nextText = value?.text ?? options.previousDraft;
+            if (ctx.ui.getEditorText() !== nextText) {
+              ctx.ui.setEditorText(nextText);
             }
             done(value);
           },
@@ -168,7 +167,6 @@ type PickerLoadState = {
   messages: RecallMessage[];
   results: RecallMessage[];
   resultMode: RecallSearchResult["mode"];
-  resultTruncated: boolean;
   queryError: string | undefined;
 };
 
@@ -227,7 +225,6 @@ class RecallPickerDialog implements Component, Focusable {
       messages: [],
       results: [],
       resultMode: options.initialQuery.trim() ? "text" : "recent",
-      resultTruncated: false,
       queryError: undefined,
     };
 
@@ -324,7 +321,6 @@ class RecallPickerDialog implements Component, Focusable {
     this.state.messages = [];
     this.state.results = [];
     this.state.resultMode = this.searchInput.getValue().trim() ? "text" : "recent";
-    this.state.resultTruncated = false;
     this.state.queryError = undefined;
     this.state.progress = {
       scope,
@@ -410,7 +406,6 @@ class RecallPickerDialog implements Component, Focusable {
     const result = searchRecallMessages(this.state.messages, this.searchInput.getValue());
     this.state.results = result.matches;
     this.state.resultMode = result.mode;
-    this.state.resultTruncated = result.truncated;
     this.state.queryError = result.error;
 
     if (this.state.results.length === 0) {
@@ -574,6 +569,22 @@ class RecallPickerDialog implements Component, Focusable {
       return lines;
     }
 
+    if (this.state.queryError) {
+      lines.push(
+        this.theme.fg(
+          "warning",
+          truncateToWidth("Fix the search query above to see matching prompts.", width)
+        )
+      );
+      lines.push(
+        this.theme.fg(
+          "dim",
+          truncateToWidth("Results update as soon as the query becomes valid.", width)
+        )
+      );
+      return lines;
+    }
+
     if (progress.loading && progress.loadedMessages === 0) {
       lines.push(this.theme.fg("accent", truncateToWidth("Scanning prior prompts…", width)));
       lines.push(
@@ -703,10 +714,6 @@ class RecallPickerDialog implements Component, Focusable {
 
     if (progress.skippedSessions > 0) {
       parts.push(`skipped ${progress.skippedSessions}`);
-    }
-
-    if (this.state.resultTruncated) {
-      parts.push(`showing first ${this.state.results.length}`);
     }
 
     return parts.join(" · ");

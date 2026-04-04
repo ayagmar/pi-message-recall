@@ -37,13 +37,12 @@ const messages: RecallMessage[] = [
 ];
 
 void test("empty queries return recent messages first", () => {
-  const result = searchRecallMessages(messages, "", 2);
+  const result = searchRecallMessages(messages, "");
 
   assert.equal(result.mode, "recent");
-  assert.equal(result.truncated, true);
   assert.deepEqual(
     result.matches.map((message) => message.id),
-    ["newest", "middle"]
+    ["newest", "middle", "oldest"]
   );
 });
 
@@ -51,7 +50,6 @@ void test("text queries support quoted phrases", () => {
   const result = searchRecallMessages(messages, '"key hints" picker');
 
   assert.equal(result.mode, "text");
-  assert.equal(result.truncated, false);
   assert.deepEqual(
     result.matches.map((message) => message.id),
     ["middle"]
@@ -74,4 +72,27 @@ void test("invalid regex queries report a helpful error", () => {
   assert.equal(result.mode, "regex");
   assert.match(result.error ?? "", /regex search/i);
   assert.equal(result.matches.length, 0);
+});
+
+void test("explicit searches return every loaded match", () => {
+  const matchingMessages = Array.from(
+    { length: 250 },
+    (_, index) =>
+      ({
+        id: `match-${index}`,
+        sessionPath: `/sessions/${index}.jsonl`,
+        sessionCwd: "/work/project",
+        timestamp: 500 - index,
+        text: `Recall this repeated prompt ${index}`,
+        preview: `Recall this repeated prompt ${index}`,
+        normalizedText: `recall this repeated prompt ${index}`,
+        isCurrentSession: false,
+      }) satisfies RecallMessage
+  );
+
+  const result = searchRecallMessages(matchingMessages, "repeated prompt");
+
+  assert.equal(result.mode, "text");
+  assert.equal(result.matches.length, 250);
+  assert.equal(result.matches.at(-1)?.id, "match-249");
 });

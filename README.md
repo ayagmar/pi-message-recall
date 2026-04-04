@@ -14,11 +14,11 @@ It is built for the common flow: open a picker, search your old prompts, drop on
 - includes the current live session state, not just old session files
 - quick scope switching in the picker with `Tab`
 - configurable default scope and shortcut via `/recall settings`
-- progressive loading, paginated results, and capped match windows for large histories
+- progressive loading and paginated results for large histories
 
 ## Install
 
-Install from npm:
+Install from npm (after the first npm release):
 
 ```bash
 pi install npm:pi-message-recall
@@ -154,7 +154,7 @@ The picker is intentionally conservative for large histories:
 
 - scope loading is incremental
 - results are paginated
-- search only keeps a capped match window in memory for rendering
+- the picker only renders the current results page at a time
 - the UI does not try to render giant result sets at once
 
 ## Limitations

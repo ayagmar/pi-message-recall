@@ -24,7 +24,6 @@ export interface RecallMessage {
 export interface RecallSearchResult {
   matches: RecallMessage[];
   mode: "recent" | "text" | "regex";
-  truncated: boolean;
   error?: string;
 }
 

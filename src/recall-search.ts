@@ -1,17 +1,11 @@
-import { MAX_MATCHES } from "./recall-constants.js";
 import { type RecallMessage, type RecallSearchResult } from "./recall-types.js";
 
-export function searchRecallMessages(
-  messages: RecallMessage[],
-  query: string,
-  limit = MAX_MATCHES
-): RecallSearchResult {
+export function searchRecallMessages(messages: RecallMessage[], query: string): RecallSearchResult {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) {
     return {
-      matches: messages.slice(0, limit),
+      matches: messages,
       mode: "recent",
-      truncated: messages.length > limit,
     };
   }
 
@@ -21,14 +15,12 @@ export function searchRecallMessages(
       return {
         matches: [],
         mode: "regex",
-        truncated: false,
         error: "Regex search must use re:<pattern> or re:/pattern/flags.",
       };
     }
 
     return collectMatches(
       messages,
-      limit,
       (message) => {
         regex.lastIndex = 0;
         return regex.test(message.text);
@@ -40,15 +32,13 @@ export function searchRecallMessages(
   const terms = parseQueryTerms(trimmedQuery);
   if (terms.length === 0) {
     return {
-      matches: messages.slice(0, limit),
+      matches: messages,
       mode: "recent",
-      truncated: messages.length > limit,
     };
   }
 
   return collectMatches(
     messages,
-    limit,
     (message) => terms.every((term) => message.normalizedText.includes(term)),
     "text"
   );
@@ -56,32 +46,12 @@ export function searchRecallMessages(
 
 function collectMatches(
   messages: RecallMessage[],
-  limit: number,
   predicate: (message: RecallMessage) => boolean,
   mode: RecallSearchResult["mode"]
 ): RecallSearchResult {
-  const matches: RecallMessage[] = [];
-
-  for (const message of messages) {
-    if (!predicate(message)) {
-      continue;
-    }
-
-    if (matches.length >= limit) {
-      return {
-        matches,
-        mode,
-        truncated: true,
-      };
-    }
-
-    matches.push(message);
-  }
-
   return {
-    matches,
+    matches: messages.filter(predicate),
     mode,
-    truncated: false,
   };
 }
 
