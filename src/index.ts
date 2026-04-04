@@ -1,118 +1,201 @@
-import { type ExtensionAPI, type ExtensionContext } from "@mariozechner/pi-coding-agent";
-import { Type } from "@sinclair/typebox";
-import { buildHelpText, parseSubcommand } from "./commands.js";
 import {
-  DEFAULT_LABEL,
-  EXTENSION_COMMAND,
-  EXTENSION_NAME,
-  STATE_ENTRY_TYPE,
-  TOOL_NAME,
-} from "./constants.js";
-import { buildEchoText } from "./tool.js";
-import { type ExtensionState } from "./types.js";
+  type ExtensionAPI,
+  type ExtensionCommandContext,
+  type ExtensionContext,
+} from "@mariozechner/pi-coding-agent";
+import { getRecallArgumentCompletions, parseRecallCommandArgs } from "./recall-command.js";
+import { EXTENSION_COMMAND } from "./recall-constants.js";
+import {
+  buildRecallStatusText,
+  getRecallSettingsPath,
+  loadRecallSettings,
+} from "./recall-settings.js";
+import { getShortcutStatus } from "./recall-shortcut.js";
+import { type RecallMessage, type RecallSettingsFlowResult } from "./recall-types.js";
+import { openRecallPicker, openRecallSettingsFlow } from "./recall-dialogs.js";
 
-export default function extensionTemplate(pi: ExtensionAPI) {
-  let state: ExtensionState = { label: DEFAULT_LABEL };
+export default function messageRecallExtension(pi: ExtensionAPI): void {
+  createMessageRecallExtension(pi);
+}
 
-  function syncState(ctx: Pick<ExtensionContext, "sessionManager" | "hasUI" | "ui">): void {
-    state = restoreFromContext(ctx);
-    if (ctx.hasUI) {
-      ctx.ui.setStatus(EXTENSION_COMMAND, `${EXTENSION_NAME}: ${state.label}`);
-    }
+export function createMessageRecallExtension(
+  pi: ExtensionAPI,
+  options?: {
+    settingsPath?: string;
+    openPicker?: (
+      ctx: ExtensionContext,
+      options: Parameters<typeof openRecallPicker>[1]
+    ) => Promise<RecallMessage | undefined>;
+    openSettings?: (
+      ctx: ExtensionContext,
+      options: Parameters<typeof openRecallSettingsFlow>[1]
+    ) => Promise<RecallSettingsFlowResult | undefined>;
   }
+): void {
+  const settingsPath = options?.settingsPath ?? getRecallSettingsPath();
+  const showPicker = options?.openPicker ?? openRecallPicker;
+  const showSettings = options?.openSettings ?? openRecallSettingsFlow;
 
-  pi.on("session_start", (_event, ctx) => syncState(ctx));
-  pi.on("session_switch", (_event, ctx) => syncState(ctx));
-  pi.on("session_tree", (_event, ctx) => syncState(ctx));
-  pi.on("session_fork", (_event, ctx) => syncState(ctx));
+  let settings = loadRecallSettings(settingsPath);
+  const startupShortcutStatus = getShortcutStatus(settings);
+  let notifiedShortcutIssue = false;
 
-  pi.registerCommand(EXTENSION_COMMAND, {
-    description: "Starter command for your extension",
-    getArgumentCompletions: (prefix) => {
-      const options = ["status", "set-label", "help"];
-      const safePrefix = prefix.toLowerCase();
-      const matches = options.filter((option) => option.startsWith(safePrefix));
-      return matches.length > 0 ? matches.map((value) => ({ value, label: value })) : null;
-    },
-    handler: (args, ctx): Promise<void> => {
-      const { name, rest } = parseSubcommand(args);
-
-      switch (name) {
-        case "status":
-          notify(ctx, `Label: ${state.label}`);
-          return Promise.resolve();
-
-        case "set-label": {
-          if (!rest) {
-            notify(ctx, buildHelpText());
-            return Promise.resolve();
-          }
-          state = { label: rest };
-          pi.appendEntry(STATE_ENTRY_TYPE, state);
-          if (ctx.hasUI) {
-            ctx.ui.setStatus(EXTENSION_COMMAND, `${EXTENSION_NAME}: ${state.label}`);
-          }
-          notify(ctx, `Label updated to: ${state.label}`);
-          return Promise.resolve();
+  if (startupShortcutStatus.state === "active") {
+    pi.registerShortcut(startupShortcutStatus.key, {
+      description: "Recall a previous user message into the editor",
+      handler: async (ctx) => {
+        if (!ctx.hasUI) {
+          return;
         }
 
-        default:
-          notify(ctx, buildHelpText());
-          return Promise.resolve();
+        if (!ctx.isIdle()) {
+          ctx.ui.notify("Wait for Pi to finish, then open Message Recall.", "info");
+          return;
+        }
+
+        try {
+          await runRecallPicker(ctx, settings, showPicker);
+        } catch (error) {
+          ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
+        }
+      },
+    });
+  }
+
+  pi.on("session_start", (_event, ctx) => {
+    if (notifiedShortcutIssue || !ctx.hasUI || startupShortcutStatus.state !== "skipped") {
+      return;
+    }
+
+    notifiedShortcutIssue = true;
+    ctx.ui.notify(
+      `Message Recall shortcut ${startupShortcutStatus.label} was not installed: ${startupShortcutStatus.detail} Use /${EXTENSION_COMMAND} or /${EXTENSION_COMMAND} settings.`,
+      "warning"
+    );
+  });
+
+  pi.registerCommand(EXTENSION_COMMAND, {
+    description: "Recall a previous user message into the editor",
+    getArgumentCompletions: getRecallArgumentCompletions,
+    handler: async (args, ctx) => {
+      const command = parseRecallCommandArgs(args);
+
+      try {
+        switch (command.kind) {
+          case "status": {
+            ctx.ui.notify(
+              buildRecallStatusText({
+                settings,
+                settingsPath,
+                shortcutStatus: getShortcutStatus(settings),
+              }),
+              "info"
+            );
+            return;
+          }
+
+          case "settings": {
+            await handleSettingsCommand(ctx, {
+              settings,
+              settingsPath,
+              openSettings: showSettings,
+              onSettingsChange: (nextSettings) => {
+                settings = nextSettings;
+              },
+            });
+            return;
+          }
+
+          case "picker": {
+            if (!ctx.hasUI) {
+              ctx.ui.notify(`/${EXTENSION_COMMAND} requires interactive mode.`, "error");
+              return;
+            }
+
+            await ctx.waitForIdle();
+            await runRecallPicker(ctx, settings, showPicker, command.initialQuery);
+            return;
+          }
+        }
+      } catch (error) {
+        ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
       }
     },
   });
+}
 
-  pi.registerTool({
-    name: TOOL_NAME,
-    label: "Echo",
-    description: "Echo text back to the model. Safe default tool for template projects.",
-    promptSnippet: "Echo text back to the user, optionally uppercased.",
-    parameters: Type.Object({
-      message: Type.String({ description: "Text to echo back" }),
-      uppercase: Type.Optional(Type.Boolean({ description: "Return the message in upper case" })),
-    }),
-    execute(_toolCallId, params) {
-      const text = buildEchoText(params);
-      return Promise.resolve({
-        content: [{ type: "text", text }],
-        details: { length: text.length },
-      });
-    },
+async function handleSettingsCommand(
+  ctx: ExtensionCommandContext,
+  options: {
+    settings: Parameters<typeof buildRecallStatusText>[0]["settings"];
+    settingsPath: string;
+    openSettings: (
+      ctx: ExtensionContext,
+      options: Parameters<typeof openRecallSettingsFlow>[1]
+    ) => Promise<RecallSettingsFlowResult | undefined>;
+    onSettingsChange: (settings: Parameters<typeof buildRecallStatusText>[0]["settings"]) => void;
+  }
+): Promise<void> {
+  if (!ctx.hasUI) {
+    ctx.ui.notify(
+      buildRecallStatusText({
+        settings: options.settings,
+        settingsPath: options.settingsPath,
+        shortcutStatus: getShortcutStatus(options.settings),
+      }),
+      "info"
+    );
+    return;
+  }
+
+  const result = await options.openSettings(ctx, {
+    settings: options.settings,
+    settingsPath: options.settingsPath,
   });
-}
+  if (!result) {
+    return;
+  }
 
-/** Notify via TUI when available, otherwise console. */
-function notify(
-  ctx: { hasUI: boolean; ui: { notify: (message: string, level: "info") => void } },
-  message: string
-): void {
-  if (ctx.hasUI) {
-    ctx.ui.notify(message, "info");
-  } else {
-    console.log(message);
+  options.onSettingsChange(result.settings);
+
+  if (result.reloadRequired) {
+    ctx.ui.notify("Reloading Message Recall to apply shortcut changes…", "info");
+    await ctx.reload();
   }
 }
 
-function restoreFromContext(ctx: Pick<ExtensionContext, "sessionManager">): ExtensionState {
-  return restoreState(ctx.sessionManager.getBranch()) ?? { label: DEFAULT_LABEL };
-}
+async function runRecallPicker(
+  ctx: ExtensionContext,
+  settings: Parameters<typeof buildRecallStatusText>[0]["settings"],
+  showPicker: (
+    ctx: ExtensionContext,
+    options: Parameters<typeof openRecallPicker>[1]
+  ) => Promise<RecallMessage | undefined>,
+  initialQuery = ""
+): Promise<void> {
+  const previousDraft = ctx.ui.getEditorText();
 
-function restoreState(
-  entries: { type?: string; customType?: string; data?: unknown }[]
-): ExtensionState | undefined {
-  for (let i = entries.length - 1; i >= 0; i -= 1) {
-    const entry = entries[i];
-    if (entry?.type !== "custom" || entry.customType !== STATE_ENTRY_TYPE) continue;
-    if (isExtensionState(entry.data)) return entry.data;
+  try {
+    const recalledMessage = await showPicker(ctx, {
+      settings,
+      initialQuery,
+      previousDraft,
+    });
+
+    if (!recalledMessage) {
+      if (ctx.ui.getEditorText() !== previousDraft) {
+        ctx.ui.setEditorText(previousDraft);
+      }
+      return;
+    }
+
+    if (ctx.ui.getEditorText() !== recalledMessage.text) {
+      ctx.ui.setEditorText(recalledMessage.text);
+    }
+  } catch (error) {
+    if (ctx.ui.getEditorText() !== previousDraft) {
+      ctx.ui.setEditorText(previousDraft);
+    }
+    throw error;
   }
-  return undefined;
-}
-
-function isExtensionState(value: unknown): value is ExtensionState {
-  return (
-    Boolean(value) &&
-    typeof value === "object" &&
-    typeof (value as { label?: unknown }).label === "string"
-  );
 }
