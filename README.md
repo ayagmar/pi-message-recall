@@ -141,6 +141,15 @@ pnpm install
 pnpm run check
 ```
 
+Release commands:
+
+```bash
+pnpm run release:patch
+pnpm run release:minor
+pnpm run release:major
+pnpm run release:first
+```
+
 Load locally in Pi:
 
 ```bash
