@@ -46,6 +46,7 @@ void test("/recall restores the previous draft when the picker is cancelled", as
   const harness = createHarness();
   createMessageRecallExtension(harness.pi, {
     openPicker: async (_ctx, options) => {
+      assert.equal(options.initialQuery, "existing draft");
       assert.equal(options.previousDraft, "existing draft");
       return undefined;
     },

@@ -174,11 +174,13 @@ async function runRecallPicker(
   initialQuery = ""
 ): Promise<void> {
   const previousDraft = ctx.ui.getEditorText();
+  const effectiveInitialQuery =
+    initialQuery.length > 0 ? initialQuery : previousDraft.replace(/\s+/g, " ").trim();
 
   try {
     const recalledMessage = await showPicker(ctx, {
       settings,
-      initialQuery,
+      initialQuery: effectiveInitialQuery,
       previousDraft,
     });
 

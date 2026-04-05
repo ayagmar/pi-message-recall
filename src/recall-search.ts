@@ -1,10 +1,16 @@
 import { type RecallMessage, type RecallSearchResult } from "./recall-types.js";
 
+type SearchTerm = {
+  text: string;
+  allowFuzzy: boolean;
+};
+
 export function searchRecallMessages(messages: RecallMessage[], query: string): RecallSearchResult {
+  const uniqueMessages = dedupeMessages(messages);
   const trimmedQuery = query.trim();
   if (!trimmedQuery) {
     return {
-      matches: messages,
+      matches: uniqueMessages,
       mode: "recent",
     };
   }
@@ -20,7 +26,7 @@ export function searchRecallMessages(messages: RecallMessage[], query: string): 
     }
 
     return collectMatches(
-      messages,
+      uniqueMessages,
       (message) => {
         regex.lastIndex = 0;
         return regex.test(message.text);
@@ -32,16 +38,30 @@ export function searchRecallMessages(messages: RecallMessage[], query: string): 
   const terms = parseQueryTerms(trimmedQuery);
   if (terms.length === 0) {
     return {
-      matches: messages,
+      matches: uniqueMessages,
       mode: "recent",
     };
   }
 
-  return collectMatches(
-    messages,
-    (message) => terms.every((term) => message.normalizedText.includes(term)),
-    "text"
-  );
+  const exactMatches: RecallMessage[] = [];
+  const fuzzyMatches: RecallMessage[] = [];
+
+  for (const message of uniqueMessages) {
+    const matchKind = classifyTextMatch(message.normalizedText, terms);
+    if (matchKind === "exact") {
+      exactMatches.push(message);
+      continue;
+    }
+
+    if (matchKind === "fuzzy") {
+      fuzzyMatches.push(message);
+    }
+  }
+
+  return {
+    matches: [...exactMatches, ...fuzzyMatches],
+    mode: "text",
+  };
 }
 
 function collectMatches(
@@ -55,8 +75,60 @@ function collectMatches(
   };
 }
 
-function parseQueryTerms(query: string): string[] {
-  const terms: string[] = [];
+function dedupeMessages(messages: RecallMessage[]): RecallMessage[] {
+  const seen = new Set<string>();
+  const unique: RecallMessage[] = [];
+
+  for (const message of messages) {
+    if (seen.has(message.text)) {
+      continue;
+    }
+
+    seen.add(message.text);
+    unique.push(message);
+  }
+
+  return unique;
+}
+
+function classifyTextMatch(
+  normalizedText: string,
+  terms: SearchTerm[]
+): "exact" | "fuzzy" | undefined {
+  let isExact = true;
+
+  for (const term of terms) {
+    if (normalizedText.includes(term.text)) {
+      continue;
+    }
+
+    if (!term.allowFuzzy || !isSubsequence(normalizedText, term.text)) {
+      return undefined;
+    }
+
+    isExact = false;
+  }
+
+  return isExact ? "exact" : "fuzzy";
+}
+
+function isSubsequence(text: string, query: string): boolean {
+  let queryIndex = 0;
+
+  for (const char of text) {
+    if (char === query[queryIndex]) {
+      queryIndex += 1;
+      if (queryIndex === query.length) {
+        return true;
+      }
+    }
+  }
+
+  return queryIndex === query.length;
+}
+
+function parseQueryTerms(query: string): SearchTerm[] {
+  const terms: SearchTerm[] = [];
   const pattern = /"([^"]+)"|(\S+)/g;
 
   for (const match of query.matchAll(pattern)) {
@@ -67,7 +139,10 @@ function parseQueryTerms(query: string): string[] {
 
     const normalized = phrase.replace(/\s+/g, " ").trim().toLowerCase();
     if (normalized) {
-      terms.push(normalized);
+      terms.push({
+        text: normalized,
+        allowFuzzy: match[1] == null,
+      });
     }
   }
 

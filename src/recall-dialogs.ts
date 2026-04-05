@@ -420,10 +420,33 @@ export function resolveRecallPickerWindow(
   };
 }
 
+export function resolveRetainedSelectionIndex(
+  results: RecallMessage[],
+  previousSelectionId: string | undefined,
+  previousSelectionText: string | undefined
+): number {
+  if (results.length === 0) {
+    return -1;
+  }
+
+  if (previousSelectionId) {
+    const byId = results.findIndex((message) => message.id === previousSelectionId);
+    if (byId >= 0) {
+      return byId;
+    }
+  }
+
+  if (previousSelectionText) {
+    return results.findIndex((message) => message.text === previousSelectionText);
+  }
+
+  return -1;
+}
+
 class RecallPickerDialog implements Component, Focusable {
   private readonly searchInput = new Input();
   private readonly searchHint =
-    'Search with words, "quoted phrases", or re:<pattern>. Empty query shows recent prompts.';
+    'Search with words, "quoted phrases", or re:<pattern>. Empty query shows recent unique prompts.';
 
   private currentPageSize = RESULT_PAGE_SIZE;
   private currentVisibleResultCount = RESULT_PAGE_SIZE;
@@ -709,7 +732,8 @@ class RecallPickerDialog implements Component, Focusable {
   }
 
   private refreshResults(): void {
-    const previousSelection = this.selectedMessageId;
+    const previousSelectionId = this.selectedMessageId;
+    const previousSelectionText = this.state.results[this.selectedIndex]?.text;
     const result = searchRecallMessages(this.state.messages, this.searchInput.getValue());
     this.state.results = result.matches;
     this.state.resultMode = result.mode;
@@ -723,9 +747,11 @@ class RecallPickerDialog implements Component, Focusable {
       return;
     }
 
-    const selectedIndex = previousSelection
-      ? this.state.results.findIndex((message) => message.id === previousSelection)
-      : -1;
+    const selectedIndex = resolveRetainedSelectionIndex(
+      this.state.results,
+      previousSelectionId,
+      previousSelectionText
+    );
     this.selectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
     this.selectedMessageId = this.state.results[this.selectedIndex]?.id;
     this.rebuildSelectListForCurrentPage();
@@ -787,8 +813,15 @@ class RecallPickerDialog implements Component, Focusable {
       return;
     }
 
-    this.selectedIndex =
-      (this.selectedIndex + delta + this.state.results.length) % this.state.results.length;
+    const nextIndex = Math.max(
+      0,
+      Math.min(this.selectedIndex + delta, this.state.results.length - 1)
+    );
+    if (nextIndex === this.selectedIndex) {
+      return;
+    }
+
+    this.selectedIndex = nextIndex;
     this.selectedMessageId = this.state.results[this.selectedIndex]?.id;
     this.applyLayout(this.getLayout());
     this.rebuildSelectListForCurrentPage();
@@ -804,8 +837,12 @@ class RecallPickerDialog implements Component, Focusable {
     }
 
     const currentPageIndex = this.getCurrentPageIndex(pageSize);
+    const nextPageIndex = Math.max(0, Math.min(currentPageIndex + delta, pageCount - 1));
+    if (nextPageIndex === currentPageIndex) {
+      return;
+    }
+
     const localIndex = this.selectedIndex - currentPageIndex * pageSize;
-    const nextPageIndex = (currentPageIndex + delta + pageCount) % pageCount;
     this.selectedIndex = Math.min(
       nextPageIndex * pageSize + localIndex,
       this.state.results.length - 1
@@ -1028,7 +1065,7 @@ class RecallPickerDialog implements Component, Focusable {
     }
 
     if (this.state.resultMode === "text") {
-      return 'Text mode · combine words and "quoted phrases" to narrow results.';
+      return "Text mode · direct matches first, with fuzzy fallback for unquoted words.";
     }
 
     return this.searchHint;

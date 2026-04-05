@@ -5,7 +5,9 @@ import {
   adjustRecallPickerLayoutForPreview,
   resolveRecallPickerLayout,
   resolveRecallPickerWindow,
+  resolveRetainedSelectionIndex,
 } from "../src/recall-dialogs.js";
+import { type RecallMessage } from "../src/recall-types.js";
 
 function expectedMaxHeight(rows: number): number {
   return Math.min(Math.floor((rows * 84) / 100), rows - 2);
@@ -91,4 +93,34 @@ void test("resolveRecallPickerWindow keeps the selected item visible on the last
   assert.equal(window.visibleStart, 21);
   assert.equal(window.visibleEnd, 25);
   assert.equal(window.selectedIndexInView, 3);
+});
+
+void test("resolveRetainedSelectionIndex falls back to prompt text when dedupe replaces the id", () => {
+  const results: RecallMessage[] = [
+    {
+      id: "newer-duplicate",
+      sessionPath: "/sessions/newer.jsonl",
+      sessionCwd: "/work/project",
+      timestamp: 3,
+      text: "Keep the key hints visible",
+      preview: "Keep the key hints visible",
+      normalizedText: "keep the key hints visible",
+      isCurrentSession: true,
+    },
+    {
+      id: "other",
+      sessionPath: "/sessions/other.jsonl",
+      sessionCwd: "/work/project",
+      timestamp: 2,
+      text: "Add pagination to the picker",
+      preview: "Add pagination to the picker",
+      normalizedText: "add pagination to the picker",
+      isCurrentSession: false,
+    },
+  ];
+
+  assert.equal(
+    resolveRetainedSelectionIndex(results, "older-duplicate", "Keep the key hints visible"),
+    0
+  );
 });

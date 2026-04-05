@@ -75,7 +75,7 @@ You can also prefill the picker query:
 
 ### What happens
 
-1. The picker opens.
+1. The picker opens, prefilled with the current editor text unless `/recall` was given an explicit query.
 2. Select a previous user message.
 3. The selected text is copied into the Pi editor.
 4. Nothing is sent automatically.
@@ -96,12 +96,14 @@ The picker opens as a centered native Pi overlay with:
 
 Keyboard flow:
 
-- empty query shows recent messages first
-- typing filters recalled messages case-insensitively
+- empty query shows recent unique messages first
+- typing prefers direct text matches, then falls back to fuzzy subsequence matches for unquoted terms
+- repeated prompts are deduped by exact prompt text
 - quoted phrases work, for example: `"key hints" picker`
 - regex mode works with `re:<pattern>` or `re:/pattern/flags`
+- `↑` / `↓` move through results and stop at the ends
 - `Tab` cycles scope
-- `PgUp` / `PgDn` page through results
+- `PgUp` / `PgDn` page through results without wrapping
 - `Enter` fills the editor
 - `Esc` cancels
 
