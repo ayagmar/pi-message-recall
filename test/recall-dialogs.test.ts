@@ -4,6 +4,7 @@ import { RESULT_PAGE_SIZE } from "../src/recall-constants.js";
 import {
   adjustRecallPickerLayoutForPreview,
   resolveRecallPickerLayout,
+  resolveRecallPickerWindow,
 } from "../src/recall-dialogs.js";
 
 function expectedMaxHeight(rows: number): number {
@@ -59,7 +60,7 @@ void test("adjustRecallPickerLayoutForPreview gives long prompts more preview sp
   assert.ok(adjusted.previewBodyLines > layout.previewBodyLines);
   assert.ok(adjusted.previewLines > layout.previewLines);
   assert.ok(adjusted.resultLines < layout.resultLines);
-  assert.ok(adjusted.pageSize < layout.pageSize);
+  assert.equal(adjusted.pageSize, layout.pageSize);
 });
 
 void test("adjustRecallPickerLayoutForPreview leaves short prompts alone", () => {
@@ -67,4 +68,27 @@ void test("adjustRecallPickerLayoutForPreview leaves short prompts alone", () =>
   const adjusted = adjustRecallPickerLayoutForPreview(layout, layout.previewBodyLines);
 
   assert.deepEqual(adjusted, layout);
+});
+
+void test("resolveRecallPickerWindow keeps pagination stable when preview shrinks the list", () => {
+  const layout = resolveRecallPickerLayout(40, 180, "balanced");
+  const adjusted = adjustRecallPickerLayoutForPreview(layout, 18);
+  const window = resolveRecallPickerWindow(1048, 61, adjusted.pageSize, adjusted.resultLines);
+
+  assert.equal(window.pageCount, Math.ceil(1048 / layout.pageSize));
+  assert.equal(window.pageIndex, Math.floor(61 / layout.pageSize));
+  assert.equal(window.pageStart, Math.floor(61 / layout.pageSize) * layout.pageSize);
+  assert.equal(window.selectedIndexInView, 61 - window.visibleStart);
+  assert.equal(window.visibleEnd - window.visibleStart, adjusted.resultLines);
+});
+
+void test("resolveRecallPickerWindow keeps the selected item visible on the last page", () => {
+  const window = resolveRecallPickerWindow(25, 24, 10, 4);
+
+  assert.equal(window.pageIndex, 2);
+  assert.equal(window.pageStart, 20);
+  assert.equal(window.pageEnd, 25);
+  assert.equal(window.visibleStart, 21);
+  assert.equal(window.visibleEnd, 25);
+  assert.equal(window.selectedIndexInView, 3);
 });

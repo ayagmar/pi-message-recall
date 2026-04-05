@@ -245,6 +245,16 @@ export interface RecallPickerLayout {
   pageSize: number;
 }
 
+export interface RecallPickerWindow {
+  pageIndex: number;
+  pageCount: number;
+  pageStart: number;
+  pageEnd: number;
+  visibleStart: number;
+  visibleEnd: number;
+  selectedIndexInView: number;
+}
+
 function getRecallPickerLayoutPreset(
   layoutPreference: RecallPickerLayoutPreference
 ): RecallPickerLayoutPreset {
@@ -364,7 +374,49 @@ export function adjustRecallPickerLayoutForPreview(
     resultLines,
     previewLines,
     previewBodyLines: Math.max(0, previewLines - 1),
-    pageSize: Math.max(1, resultLines),
+  };
+}
+
+export function resolveRecallPickerWindow(
+  resultCount: number,
+  selectedIndex: number,
+  pageSize: number,
+  visibleCount: number
+): RecallPickerWindow {
+  const safePageSize = Math.max(1, pageSize);
+  const pageCount = Math.max(1, Math.ceil(resultCount / safePageSize));
+
+  if (resultCount <= 0) {
+    return {
+      pageIndex: 0,
+      pageCount,
+      pageStart: 0,
+      pageEnd: 0,
+      visibleStart: 0,
+      visibleEnd: 0,
+      selectedIndexInView: 0,
+    };
+  }
+
+  const safeSelectedIndex = Math.max(0, Math.min(selectedIndex, resultCount - 1));
+  const pageIndex = Math.floor(safeSelectedIndex / safePageSize);
+  const pageStart = pageIndex * safePageSize;
+  const pageEnd = Math.min(pageStart + safePageSize, resultCount);
+  const pageLength = pageEnd - pageStart;
+  const safeVisibleCount = Math.max(1, Math.min(pageLength, visibleCount));
+  const localIndex = safeSelectedIndex - pageStart;
+  const maxOffset = Math.max(0, pageLength - safeVisibleCount);
+  const centeredOffset = Math.max(0, localIndex - Math.floor(safeVisibleCount / 2));
+  const visibleStart = pageStart + Math.min(centeredOffset, maxOffset);
+
+  return {
+    pageIndex,
+    pageCount,
+    pageStart,
+    pageEnd,
+    visibleStart,
+    visibleEnd: Math.min(visibleStart + safeVisibleCount, pageEnd),
+    selectedIndexInView: safeSelectedIndex - visibleStart,
   };
 }
 
@@ -374,9 +426,11 @@ class RecallPickerDialog implements Component, Focusable {
     'Search with words, "quoted phrases", or re:<pattern>. Empty query shows recent prompts.';
 
   private currentPageSize = RESULT_PAGE_SIZE;
+  private currentVisibleResultCount = RESULT_PAGE_SIZE;
   private currentResultPrimaryColumnWidth = RESULT_PRIMARY_COLUMN_WIDTH;
   private selectList: SelectList = this.createSelectList(
     [],
+    this.currentVisibleResultCount,
     this.currentPageSize,
     this.currentResultPrimaryColumnWidth
   );
@@ -613,19 +667,23 @@ class RecallPickerDialog implements Component, Focusable {
 
   private applyLayout(layout: RecallPickerLayout): void {
     this.currentPageSize = layout.pageSize;
+    this.currentVisibleResultCount = layout.resultLines;
     this.currentResultPrimaryColumnWidth = layout.resultPrimaryColumnWidth;
   }
 
   private rebuildSelectList(items: SelectItem[]): void {
     this.selectList = this.createSelectList(
       items,
+      this.currentVisibleResultCount,
       this.currentPageSize,
       this.currentResultPrimaryColumnWidth
     );
   }
 
   private rebuildSelectListForCurrentPage(): void {
-    this.rebuildSelectList(this.visibleResults(this.currentPageSize));
+    this.rebuildSelectList(
+      this.visibleResults(this.currentPageSize, this.currentVisibleResultCount)
+    );
   }
 
   private syncLayout(width: number): RecallPickerLayout {
@@ -639,6 +697,7 @@ class RecallPickerDialog implements Component, Focusable {
 
     if (
       layout.pageSize !== this.currentPageSize ||
+      layout.resultLines !== this.currentVisibleResultCount ||
       layout.resultPrimaryColumnWidth !== this.currentResultPrimaryColumnWidth
     ) {
       this.applyLayout(layout);
@@ -674,12 +733,13 @@ class RecallPickerDialog implements Component, Focusable {
 
   private createSelectList(
     items: SelectItem[],
+    visibleCount: number,
     pageSize: number,
     resultPrimaryColumnWidth: number
   ): SelectList {
     const list = new SelectList(
       items,
-      Math.max(1, Math.min(items.length, pageSize)),
+      Math.max(1, Math.min(items.length, visibleCount)),
       {
         selectedPrefix: (text) => this.highlightSelected(text),
         selectedText: (text) => this.highlightSelected(text),
@@ -694,15 +754,15 @@ class RecallPickerDialog implements Component, Focusable {
     );
 
     if (items.length > 0) {
-      list.setSelectedIndex(this.selectedIndex - this.getCurrentPageIndex(pageSize) * pageSize);
+      list.setSelectedIndex(this.getCurrentWindow(pageSize, visibleCount).selectedIndexInView);
     }
 
     return list;
   }
 
-  private visibleResults(pageSize: number): SelectItem[] {
-    const start = this.getCurrentPageIndex(pageSize) * pageSize;
-    return this.state.results.slice(start, start + pageSize).map((message) => ({
+  private visibleResults(pageSize: number, visibleCount: number): SelectItem[] {
+    const window = this.getCurrentWindow(pageSize, visibleCount);
+    return this.state.results.slice(window.visibleStart, window.visibleEnd).map((message) => ({
       value: message.id,
       label: message.preview,
       description: formatMessageDescription(message),
@@ -710,7 +770,16 @@ class RecallPickerDialog implements Component, Focusable {
   }
 
   private getCurrentPageIndex(pageSize: number): number {
-    return Math.floor(this.selectedIndex / pageSize);
+    return this.getCurrentWindow(pageSize, this.currentVisibleResultCount).pageIndex;
+  }
+
+  private getCurrentWindow(pageSize: number, visibleCount: number): RecallPickerWindow {
+    return resolveRecallPickerWindow(
+      this.state.results.length,
+      this.selectedIndex,
+      pageSize,
+      visibleCount
+    );
   }
 
   private moveSelection(delta: number): void {
