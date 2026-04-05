@@ -11,14 +11,25 @@ import {
   visibleWidth,
   wrapTextWithAnsi,
 } from "@mariozechner/pi-tui";
-import { DEFAULT_SHORTCUT_KEY, RECALL_SCOPES, RESULT_PAGE_SIZE } from "./recall-constants.js";
+import {
+  DEFAULT_SHORTCUT_KEY,
+  RECALL_PICKER_LAYOUTS,
+  RECALL_SCOPES,
+  RESULT_PAGE_SIZE,
+} from "./recall-constants.js";
 import { getAvailableScopes, loadMessagesForScope, resolveRecallScope } from "./recall-history.js";
 import { searchRecallMessages } from "./recall-search.js";
-import { createRecallSettings, formatRecallScope, saveRecallSettings } from "./recall-settings.js";
+import {
+  createRecallSettings,
+  formatRecallPickerLayout,
+  formatRecallScope,
+  saveRecallSettings,
+} from "./recall-settings.js";
 import { formatShortcutKey, normalizeShortcutKey, validateShortcutKey } from "./recall-shortcut.js";
 import {
   type RecallLoadProgress,
   type RecallMessage,
+  type RecallPickerLayoutPreference,
   type RecallPickerOptions,
   type RecallScope,
   type RecallSearchResult,
@@ -32,6 +43,7 @@ export async function openRecallPicker(
 ): Promise<RecallMessage | undefined> {
   const availableScopes = getAvailableScopes(ctx.cwd);
   const initialScope = resolveRecallScope(options.settings.defaultScope, availableScopes);
+  const layoutPreset = getRecallPickerLayoutPreset(options.settings.pickerLayout);
 
   return ctx.ui.custom<RecallMessage | undefined>(
     (tui, theme, keybindings, done) => {
@@ -42,6 +54,7 @@ export async function openRecallPicker(
           initialQuery: options.initialQuery,
           initialScope,
           availableScopes,
+          layoutPreference: options.settings.pickerLayout,
           currentCwd: ctx.cwd,
           currentSessionDir: ctx.sessionManager.getSessionDir(),
           currentSessionEntries: ctx.sessionManager.getEntries() as Parameters<
@@ -59,6 +72,8 @@ export async function openRecallPicker(
             done(value);
           },
           requestRender: () => tui.requestRender(),
+          getTerminalRows: () => tui.terminal.rows,
+          getTerminalColumns: () => tui.terminal.columns,
         }
       );
     },
@@ -66,10 +81,10 @@ export async function openRecallPicker(
       overlay: true,
       overlayOptions: {
         anchor: "center",
-        width: "72%",
-        minWidth: 72,
-        maxHeight: "84%",
-        margin: 1,
+        width: `${layoutPreset.overlayWidthPercent}%`,
+        minWidth: RECALL_PICKER_OVERLAY_MIN_WIDTH,
+        maxHeight: `${RECALL_PICKER_OVERLAY_MAX_HEIGHT_PERCENT}%`,
+        margin: RECALL_PICKER_OVERLAY_MARGIN,
       },
     }
   );
@@ -87,6 +102,7 @@ export async function openRecallSettingsFlow(
   while (true) {
     const choices = [
       `Default scope · ${formatRecallScope(settings.defaultScope)}`,
+      `Picker layout · ${formatRecallPickerLayout(settings.pickerLayout)}`,
       `Shortcut · ${settings.shortcutEnabled ? "Enabled" : "Disabled"}`,
       `Shortcut key · ${formatShortcutKey(settings.shortcutKey)}`,
       "Reset to defaults",
@@ -109,6 +125,16 @@ export async function openRecallSettingsFlow(
       }
 
       case 1: {
+        const next = await updatePickerLayout(ctx, settings, options.settingsPath);
+        if (!next) {
+          continue;
+        }
+
+        settings = next;
+        continue;
+      }
+
+      case 2: {
         const next = await toggleShortcut(ctx, settings);
         if (!next) {
           continue;
@@ -121,7 +147,7 @@ export async function openRecallSettingsFlow(
         };
       }
 
-      case 2: {
+      case 3: {
         const captured = await captureShortcutKey(ctx, {
           currentValue: settings.shortcutKey,
         });
@@ -137,10 +163,10 @@ export async function openRecallSettingsFlow(
         };
       }
 
-      case 3: {
+      case 4: {
         const confirmed = await ctx.ui.confirm(
           "Reset Message Recall settings",
-          "Restore the default scope and shortcut?"
+          "Restore the default scope, picker layout, and shortcut?"
         );
         if (!confirmed) {
           continue;
@@ -170,20 +196,191 @@ type PickerLoadState = {
   queryError: string | undefined;
 };
 
-const RESULT_PANEL_LINES = RESULT_PAGE_SIZE;
+const RECALL_PICKER_OVERLAY_MIN_WIDTH = 72;
+const RECALL_PICKER_OVERLAY_MARGIN = 1;
+const RECALL_PICKER_OVERLAY_MAX_HEIGHT_PERCENT = 84;
+
 const RESULT_PRIMARY_COLUMN_WIDTH = 38;
-const PREVIEW_BODY_LINES = 4;
-const PREVIEW_PANEL_LINES = PREVIEW_BODY_LINES + 1;
+
+type RecallPickerLayoutPreset = {
+  overlayWidthPercent: number;
+  resultPrimaryColumnWidthRatio: number;
+  maxResultPrimaryColumnWidth: number;
+};
+
+const RECALL_PICKER_LAYOUT_PRESETS: Record<RecallPickerLayoutPreference, RecallPickerLayoutPreset> =
+  {
+    compact: {
+      overlayWidthPercent: 72,
+      resultPrimaryColumnWidthRatio: 0.46,
+      maxResultPrimaryColumnWidth: 68,
+    },
+    balanced: {
+      overlayWidthPercent: 76,
+      resultPrimaryColumnWidthRatio: 0.5,
+      maxResultPrimaryColumnWidth: 80,
+    },
+    wide: {
+      overlayWidthPercent: 82,
+      resultPrimaryColumnWidthRatio: 0.55,
+      maxResultPrimaryColumnWidth: 88,
+    },
+  };
+const BASE_RESULT_PANEL_LINES = RESULT_PAGE_SIZE;
+const BASE_PREVIEW_BODY_LINES = 4;
+const BASE_PREVIEW_PANEL_LINES = BASE_PREVIEW_BODY_LINES + 1;
+const MIN_RESULT_PANEL_LINES = 4;
+const MIN_PREVIEW_PANEL_LINES = 3;
+const MAX_PREVIEW_PANEL_FRACTION = 0.4;
+const PICKER_FIXED_LINES = 12;
+
+export interface RecallPickerLayout {
+  overlayWidth: number;
+  resultPrimaryColumnWidth: number;
+  maxHeight: number;
+  totalLines: number;
+  resultLines: number;
+  previewLines: number;
+  previewBodyLines: number;
+  pageSize: number;
+}
+
+function getRecallPickerLayoutPreset(
+  layoutPreference: RecallPickerLayoutPreference
+): RecallPickerLayoutPreset {
+  return RECALL_PICKER_LAYOUT_PRESETS[layoutPreference];
+}
+
+function resolveRecallPickerOverlayWidth(
+  terminalColumns: number,
+  overlayWidthPercent: number
+): number {
+  const maxWidth = Math.max(1, terminalColumns - RECALL_PICKER_OVERLAY_MARGIN * 2);
+  return Math.max(
+    1,
+    Math.min(
+      Math.max(
+        Math.floor((terminalColumns * overlayWidthPercent) / 100),
+        RECALL_PICKER_OVERLAY_MIN_WIDTH
+      ),
+      maxWidth
+    )
+  );
+}
+
+export function resolveRecallPickerLayout(
+  terminalRows: number,
+  terminalColumns = RECALL_PICKER_OVERLAY_MIN_WIDTH,
+  layoutPreference: RecallPickerLayoutPreference = "balanced"
+): RecallPickerLayout {
+  const preset = getRecallPickerLayoutPreset(layoutPreference);
+  const overlayWidth = resolveRecallPickerOverlayWidth(terminalColumns, preset.overlayWidthPercent);
+  const innerWidth = Math.max(20, overlayWidth - 2);
+  const resultPrimaryColumnWidth = Math.max(
+    RESULT_PRIMARY_COLUMN_WIDTH,
+    Math.min(
+      preset.maxResultPrimaryColumnWidth,
+      Math.floor(innerWidth * preset.resultPrimaryColumnWidthRatio)
+    )
+  );
+  const maxHeight = Math.max(
+    1,
+    Math.min(
+      Math.floor((terminalRows * RECALL_PICKER_OVERLAY_MAX_HEIGHT_PERCENT) / 100),
+      terminalRows - RECALL_PICKER_OVERLAY_MARGIN * 2
+    )
+  );
+  const availablePanelLines = Math.max(0, maxHeight - PICKER_FIXED_LINES);
+
+  if (availablePanelLines <= 0) {
+    return {
+      overlayWidth,
+      resultPrimaryColumnWidth,
+      maxHeight,
+      totalLines: PICKER_FIXED_LINES,
+      resultLines: 0,
+      previewLines: 0,
+      previewBodyLines: 0,
+      pageSize: 1,
+    };
+  }
+
+  let resultLines = 0;
+  let previewLines = 0;
+
+  if (availablePanelLines <= MIN_RESULT_PANEL_LINES + MIN_PREVIEW_PANEL_LINES) {
+    resultLines = Math.max(1, availablePanelLines - 1);
+    previewLines = Math.max(0, availablePanelLines - resultLines);
+  } else {
+    resultLines = Math.min(BASE_RESULT_PANEL_LINES, availablePanelLines - MIN_PREVIEW_PANEL_LINES);
+    previewLines = Math.min(BASE_PREVIEW_PANEL_LINES, availablePanelLines - resultLines);
+
+    const extraLines = availablePanelLines - resultLines - previewLines;
+    if (extraLines > 0) {
+      const previewExtra = Math.floor(extraLines / 3);
+      previewLines += previewExtra;
+      resultLines += extraLines - previewExtra;
+    }
+  }
+
+  return {
+    overlayWidth,
+    resultPrimaryColumnWidth,
+    maxHeight,
+    totalLines: PICKER_FIXED_LINES + resultLines + previewLines,
+    resultLines,
+    previewLines,
+    previewBodyLines: Math.max(0, previewLines - 1),
+    pageSize: Math.max(1, resultLines),
+  };
+}
+
+export function adjustRecallPickerLayoutForPreview(
+  layout: RecallPickerLayout,
+  previewBodyLineCount: number
+): RecallPickerLayout {
+  if (previewBodyLineCount <= layout.previewBodyLines) {
+    return layout;
+  }
+
+  const panelLines = layout.resultLines + layout.previewLines;
+  const maxPreviewLines = Math.max(
+    layout.previewLines,
+    Math.floor(panelLines * MAX_PREVIEW_PANEL_FRACTION)
+  );
+  const desiredPreviewLines = Math.min(maxPreviewLines, previewBodyLineCount + 1);
+  const maxBorrow = Math.max(0, layout.resultLines - MIN_RESULT_PANEL_LINES);
+  const borrowedLines = Math.min(maxBorrow, desiredPreviewLines - layout.previewLines);
+
+  if (borrowedLines <= 0) {
+    return layout;
+  }
+
+  const resultLines = layout.resultLines - borrowedLines;
+  const previewLines = layout.previewLines + borrowedLines;
+
+  return {
+    ...layout,
+    resultLines,
+    previewLines,
+    previewBodyLines: Math.max(0, previewLines - 1),
+    pageSize: Math.max(1, resultLines),
+  };
+}
 
 class RecallPickerDialog implements Component, Focusable {
   private readonly searchInput = new Input();
-  private readonly pageSize = RESULT_PAGE_SIZE;
   private readonly searchHint =
     'Search with words, "quoted phrases", or re:<pattern>. Empty query shows recent prompts.';
 
-  private selectList: SelectList = this.createSelectList([]);
+  private currentPageSize = RESULT_PAGE_SIZE;
+  private currentResultPrimaryColumnWidth = RESULT_PRIMARY_COLUMN_WIDTH;
+  private selectList: SelectList = this.createSelectList(
+    [],
+    this.currentPageSize,
+    this.currentResultPrimaryColumnWidth
+  );
   private selectedMessageId: string | undefined;
-  private pageIndex = 0;
   private selectedIndex = 0;
   private loadAbort?: AbortController;
   private disposed = false;
@@ -199,6 +396,7 @@ class RecallPickerDialog implements Component, Focusable {
       initialQuery: string;
       initialScope: RecallScope;
       availableScopes: RecallScope[];
+      layoutPreference: RecallPickerLayoutPreference;
       currentCwd: string;
       currentSessionDir: string;
       currentSessionEntries: Parameters<typeof loadMessagesForScope>[0]["currentSessionEntries"];
@@ -208,6 +406,8 @@ class RecallPickerDialog implements Component, Focusable {
     private readonly callbacks: {
       onDone: (value: RecallMessage | undefined) => void;
       requestRender: () => void;
+      getTerminalRows: () => number;
+      getTerminalColumns: () => number;
     }
   ) {
     this.scope = options.initialScope;
@@ -227,6 +427,7 @@ class RecallPickerDialog implements Component, Focusable {
       resultMode: options.initialQuery.trim() ? "text" : "recent",
       queryError: undefined,
     };
+    this.refreshResults();
 
     void this.reloadScope(this.scope);
   }
@@ -251,23 +452,26 @@ class RecallPickerDialog implements Component, Focusable {
 
   render(width: number): string[] {
     const innerWidth = Math.max(20, width - 2);
+    const layout = this.syncLayout(innerWidth);
     const lines: string[] = [
       this.renderHeaderLine(innerWidth),
       this.theme.fg("dim", truncateToWidth(this.buildMetaLine(), innerWidth)),
       this.renderScopeLine(innerWidth),
       ...this.renderSearchLines(innerWidth),
       this.renderDivider(innerWidth),
-      this.theme.fg("accent", truncateToWidth(this.buildResultsLine(), innerWidth)),
-      ...this.renderResultsPanel(innerWidth),
+      this.theme.fg("accent", truncateToWidth(this.buildResultsLine(layout.pageSize), innerWidth)),
+      ...this.renderResultsPanel(innerWidth, layout.resultLines),
       this.renderDivider(innerWidth),
-      this.theme.fg("accent", truncateToWidth(this.buildPreviewLine(innerWidth), innerWidth)),
-      ...this.renderPreviewLines(innerWidth),
-      this.theme.fg("dim", truncateToWidth(this.buildHelpLine(), innerWidth)),
+      this.theme.fg(
+        "accent",
+        truncateToWidth(this.buildPreviewLine(innerWidth, layout.previewBodyLines), innerWidth)
+      ),
+      ...this.renderPreviewLines(innerWidth, layout.previewLines, layout.previewBodyLines),
+      this.theme.fg("dim", truncateToWidth(this.buildHelpLine(layout.pageSize), innerWidth)),
     ];
 
     return renderDialogBox(this.theme, innerWidth, lines);
   }
-
   handleInput(data: string): void {
     if (this.keybindings.matches(data, "tui.input.tab")) {
       void this.reloadScope(this.nextScope());
@@ -330,10 +534,8 @@ class RecallPickerDialog implements Component, Focusable {
       skippedSessions: 0,
       loading: true,
     };
-    this.pageIndex = 0;
     this.selectedIndex = 0;
     this.selectedMessageId = undefined;
-    this.selectList = this.createSelectList([]);
     this.refreshResults();
     this.callbacks.requestRender();
 
@@ -401,18 +603,64 @@ class RecallPickerDialog implements Component, Focusable {
     this.callbacks.onDone(value);
   }
 
+  private getLayout(): RecallPickerLayout {
+    return resolveRecallPickerLayout(
+      this.callbacks.getTerminalRows(),
+      this.callbacks.getTerminalColumns(),
+      this.options.layoutPreference
+    );
+  }
+
+  private applyLayout(layout: RecallPickerLayout): void {
+    this.currentPageSize = layout.pageSize;
+    this.currentResultPrimaryColumnWidth = layout.resultPrimaryColumnWidth;
+  }
+
+  private rebuildSelectList(items: SelectItem[]): void {
+    this.selectList = this.createSelectList(
+      items,
+      this.currentPageSize,
+      this.currentResultPrimaryColumnWidth
+    );
+  }
+
+  private rebuildSelectListForCurrentPage(): void {
+    this.rebuildSelectList(this.visibleResults(this.currentPageSize));
+  }
+
+  private syncLayout(width: number): RecallPickerLayout {
+    const selected = this.state.results[this.selectedIndex];
+    const layout = selected
+      ? adjustRecallPickerLayoutForPreview(
+          this.getLayout(),
+          this.getWrappedPreviewLines(selected, width).length
+        )
+      : this.getLayout();
+
+    if (
+      layout.pageSize !== this.currentPageSize ||
+      layout.resultPrimaryColumnWidth !== this.currentResultPrimaryColumnWidth
+    ) {
+      this.applyLayout(layout);
+      this.state.results.length === 0
+        ? this.rebuildSelectList([])
+        : this.rebuildSelectListForCurrentPage();
+    }
+    return layout;
+  }
+
   private refreshResults(): void {
     const previousSelection = this.selectedMessageId;
     const result = searchRecallMessages(this.state.messages, this.searchInput.getValue());
     this.state.results = result.matches;
     this.state.resultMode = result.mode;
     this.state.queryError = result.error;
+    this.applyLayout(this.getLayout());
 
     if (this.state.results.length === 0) {
-      this.pageIndex = 0;
       this.selectedIndex = 0;
       this.selectedMessageId = undefined;
-      this.selectList = this.createSelectList([]);
+      this.rebuildSelectList([]);
       return;
     }
 
@@ -420,15 +668,18 @@ class RecallPickerDialog implements Component, Focusable {
       ? this.state.results.findIndex((message) => message.id === previousSelection)
       : -1;
     this.selectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
-    this.pageIndex = Math.floor(this.selectedIndex / this.pageSize);
     this.selectedMessageId = this.state.results[this.selectedIndex]?.id;
-    this.selectList = this.createSelectList(this.visibleResults());
+    this.rebuildSelectListForCurrentPage();
   }
 
-  private createSelectList(items: SelectItem[]): SelectList {
+  private createSelectList(
+    items: SelectItem[],
+    pageSize: number,
+    resultPrimaryColumnWidth: number
+  ): SelectList {
     const list = new SelectList(
       items,
-      Math.max(1, Math.min(items.length, this.pageSize)),
+      Math.max(1, Math.min(items.length, pageSize)),
       {
         selectedPrefix: (text) => this.highlightSelected(text),
         selectedText: (text) => this.highlightSelected(text),
@@ -437,25 +688,29 @@ class RecallPickerDialog implements Component, Focusable {
         noMatch: (text) => this.theme.fg("warning", text),
       },
       {
-        minPrimaryColumnWidth: RESULT_PRIMARY_COLUMN_WIDTH,
-        maxPrimaryColumnWidth: RESULT_PRIMARY_COLUMN_WIDTH,
+        minPrimaryColumnWidth: resultPrimaryColumnWidth,
+        maxPrimaryColumnWidth: resultPrimaryColumnWidth,
       }
     );
 
     if (items.length > 0) {
-      list.setSelectedIndex(this.selectedIndex - this.pageIndex * this.pageSize);
+      list.setSelectedIndex(this.selectedIndex - this.getCurrentPageIndex(pageSize) * pageSize);
     }
 
     return list;
   }
 
-  private visibleResults(): SelectItem[] {
-    const start = this.pageIndex * this.pageSize;
-    return this.state.results.slice(start, start + this.pageSize).map((message) => ({
+  private visibleResults(pageSize: number): SelectItem[] {
+    const start = this.getCurrentPageIndex(pageSize) * pageSize;
+    return this.state.results.slice(start, start + pageSize).map((message) => ({
       value: message.id,
       label: message.preview,
       description: formatMessageDescription(message),
     }));
+  }
+
+  private getCurrentPageIndex(pageSize: number): number {
+    return Math.floor(this.selectedIndex / pageSize);
   }
 
   private moveSelection(delta: number): void {
@@ -466,25 +721,29 @@ class RecallPickerDialog implements Component, Focusable {
     this.selectedIndex =
       (this.selectedIndex + delta + this.state.results.length) % this.state.results.length;
     this.selectedMessageId = this.state.results[this.selectedIndex]?.id;
-    this.pageIndex = Math.floor(this.selectedIndex / this.pageSize);
-    this.selectList = this.createSelectList(this.visibleResults());
+    this.applyLayout(this.getLayout());
+    this.rebuildSelectListForCurrentPage();
     this.callbacks.requestRender();
   }
 
   private movePage(delta: number): void {
-    const pageCount = Math.max(1, Math.ceil(this.state.results.length / this.pageSize));
+    const layout = this.getLayout();
+    const pageSize = layout.pageSize;
+    const pageCount = Math.max(1, Math.ceil(this.state.results.length / pageSize));
     if (pageCount <= 1) {
       return;
     }
 
-    const localIndex = this.selectedIndex - this.pageIndex * this.pageSize;
-    this.pageIndex = (this.pageIndex + delta + pageCount) % pageCount;
+    const currentPageIndex = this.getCurrentPageIndex(pageSize);
+    const localIndex = this.selectedIndex - currentPageIndex * pageSize;
+    const nextPageIndex = (currentPageIndex + delta + pageCount) % pageCount;
     this.selectedIndex = Math.min(
-      this.pageIndex * this.pageSize + localIndex,
+      nextPageIndex * pageSize + localIndex,
       this.state.results.length - 1
     );
     this.selectedMessageId = this.state.results[this.selectedIndex]?.id;
-    this.selectList = this.createSelectList(this.visibleResults());
+    this.applyLayout(layout);
+    this.rebuildSelectListForCurrentPage();
     this.callbacks.requestRender();
   }
 
@@ -547,10 +806,10 @@ class RecallPickerDialog implements Component, Focusable {
     return [prefix + inputLine, hint];
   }
 
-  private renderResultsPanel(width: number): string[] {
+  private renderResultsPanel(width: number, resultLines: number): string[] {
     const lines =
       this.state.results.length > 0 ? this.selectList.render(width) : this.renderEmptyState(width);
-    return padBlockLines(lines, RESULT_PANEL_LINES);
+    return fitBlockLines(lines, resultLines);
   }
 
   private renderEmptyState(width: number): string[] {
@@ -656,10 +915,14 @@ class RecallPickerDialog implements Component, Focusable {
     return lines;
   }
 
-  private renderPreviewLines(width: number): string[] {
+  private renderPreviewLines(
+    width: number,
+    previewLines: number,
+    previewBodyLines: number
+  ): string[] {
     const selected = this.state.results[this.selectedIndex];
     if (!selected) {
-      return padBlockLines(
+      return fitBlockLines(
         [
           this.theme.fg(
             "dim",
@@ -673,16 +936,16 @@ class RecallPickerDialog implements Component, Focusable {
             truncateToWidth("Press Enter to restore the highlighted prompt into the editor.", width)
           ),
         ],
-        PREVIEW_PANEL_LINES
+        previewLines
       );
     }
 
-    return padBlockLines(
+    return fitBlockLines(
       [
         this.theme.fg("dim", truncateToWidth(formatMessageDescription(selected), width)),
-        ...this.getWrappedPreviewLines(selected, width).slice(0, PREVIEW_BODY_LINES),
+        ...this.getWrappedPreviewLines(selected, width).slice(0, previewBodyLines),
       ],
-      PREVIEW_PANEL_LINES
+      previewLines
     );
   }
 
@@ -719,8 +982,8 @@ class RecallPickerDialog implements Component, Focusable {
     return parts.join(" · ");
   }
 
-  private buildResultsLine(): string {
-    const pageCount = Math.max(1, Math.ceil(this.state.results.length / this.pageSize));
+  private buildResultsLine(pageSize: number): string {
+    const pageCount = Math.max(1, Math.ceil(this.state.results.length / pageSize));
     const parts = [
       `${formatResultMode(this.state.resultMode)} results`,
       `${this.state.results.length} match${this.state.results.length === 1 ? "" : "es"}`,
@@ -728,13 +991,13 @@ class RecallPickerDialog implements Component, Focusable {
 
     if (this.state.results.length > 0) {
       parts.push(`selected ${this.selectedIndex + 1}/${this.state.results.length}`);
-      parts.push(`page ${this.pageIndex + 1}/${pageCount}`);
+      parts.push(`page ${this.getCurrentPageIndex(pageSize) + 1}/${pageCount}`);
     }
 
     return parts.join(" · ");
   }
 
-  private buildPreviewLine(width: number): string {
+  private buildPreviewLine(width: number, previewBodyLines: number): string {
     if (this.state.results.length === 0) {
       return "Preview";
     }
@@ -746,7 +1009,7 @@ class RecallPickerDialog implements Component, Focusable {
     }
 
     if (selected) {
-      const hiddenLines = this.getWrappedPreviewLines(selected, width).length - PREVIEW_BODY_LINES;
+      const hiddenLines = this.getWrappedPreviewLines(selected, width).length - previewBodyLines;
       if (hiddenLines > 0) {
         parts.push(`+${hiddenLines} more`);
       }
@@ -759,12 +1022,12 @@ class RecallPickerDialog implements Component, Focusable {
     return wrapTextWithAnsi(message.text.trim(), width).filter(Boolean);
   }
 
-  private buildHelpLine(): string {
+  private buildHelpLine(pageSize: number): string {
     const parts = [
       formatKeybindingPair(this.keybindings, "tui.select.up", "tui.select.down", "move"),
     ];
 
-    if (this.state.results.length > this.pageSize) {
+    if (this.state.results.length > pageSize) {
       parts.push(
         formatKeybindingPair(this.keybindings, "tui.select.pageUp", "tui.select.pageDown", "pages")
       );
@@ -898,6 +1161,32 @@ async function updateDefaultScope(
   return nextSettings;
 }
 
+async function updatePickerLayout(
+  ctx: ExtensionContext,
+  settings: RecallSettings,
+  settingsPath: string
+): Promise<RecallSettings | undefined> {
+  const availableLayouts = [...RECALL_PICKER_LAYOUTS];
+  const labels = availableLayouts.map((layout) => formatRecallPickerLayout(layout));
+  const selected = await ctx.ui.select("Message Recall picker layout", labels);
+  if (!selected) {
+    return undefined;
+  }
+
+  const nextLayout = availableLayouts[labels.indexOf(selected)];
+  if (!nextLayout || nextLayout === settings.pickerLayout) {
+    return undefined;
+  }
+
+  const nextSettings = { ...settings, pickerLayout: nextLayout };
+  saveRecallSettings(nextSettings, settingsPath);
+  ctx.ui.notify(
+    `Message Recall picker layout saved: ${formatRecallPickerLayout(nextLayout)}.`,
+    "info"
+  );
+  return nextSettings;
+}
+
 async function toggleShortcut(
   ctx: ExtensionContext,
   settings: RecallSettings
@@ -953,21 +1242,20 @@ function mergeMessagesByTimestamp(
   let existingIndex = 0;
   let incomingIndex = 0;
 
-  while (existingIndex < existing.length && incomingIndex < sortedIncoming.length) {
-    const existingMessage = existing[existingIndex];
-    const incomingMessage = sortedIncoming[incomingIndex];
-    if (!existingMessage || !incomingMessage) {
-      break;
-    }
+  let existingMessage = existing[existingIndex];
+  let incomingMessage = sortedIncoming[incomingIndex];
 
+  while (existingMessage !== undefined && incomingMessage !== undefined) {
     if (existingMessage.timestamp >= incomingMessage.timestamp) {
       merged.push(existingMessage);
       existingIndex += 1;
+      existingMessage = existing[existingIndex];
       continue;
     }
 
     merged.push(incomingMessage);
     incomingIndex += 1;
+    incomingMessage = sortedIncoming[incomingIndex];
   }
 
   if (existingIndex < existing.length) {
@@ -1060,9 +1348,13 @@ function padAnsi(text: string, width: number): string {
   return `${text}${" ".repeat(width - currentWidth)}`;
 }
 
-function padBlockLines(lines: string[], minLines: number): string[] {
-  const next = [...lines];
-  while (next.length < minLines) {
+function fitBlockLines(lines: string[], lineCount: number): string[] {
+  if (lineCount <= 0) {
+    return [];
+  }
+
+  const next = lines.slice(0, lineCount);
+  while (next.length < lineCount) {
     next.push("");
   }
   return next;

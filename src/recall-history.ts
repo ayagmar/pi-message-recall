@@ -124,14 +124,9 @@ export async function loadMessagesForScope(
 
   callbacks.onProgress({ ...progress });
 
-  for (let index = 0; index < listed.sessions.length; index += 1) {
+  for (const [index, sessionInfo] of listed.sessions.entries()) {
     if (options?.signal?.aborted) {
       return { ...progress, loading: false };
-    }
-
-    const sessionInfo = listed.sessions[index];
-    if (!sessionInfo) {
-      continue;
     }
 
     try {
@@ -300,17 +295,17 @@ function attachCurrentSession(
     (session) => session.path === request.currentSessionFile
   );
   if (existingIndex >= 0) {
-    const existing = nextSessions[existingIndex];
-    if (!existing) {
-      return nextSessions;
-    }
-
-    nextSessions[existingIndex] = {
-      ...existing,
-      isCurrentSession: true,
-      modified: new Date(),
-    };
-    return nextSessions.sort(compareSessions);
+    return nextSessions
+      .map((session, index) =>
+        index === existingIndex
+          ? {
+              ...session,
+              isCurrentSession: true,
+              modified: new Date(),
+            }
+          : session
+      )
+      .sort(compareSessions);
   }
 
   return [createSyntheticCurrentSession(request), ...nextSessions].sort(compareSessions);

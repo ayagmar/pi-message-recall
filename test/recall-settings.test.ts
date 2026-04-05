@@ -13,9 +13,10 @@ import {
 } from "../src/recall-settings.js";
 import { getShortcutStatus, validateShortcutKey } from "../src/recall-shortcut.js";
 
-void test("createRecallSettings returns the default scope and shortcut", () => {
+void test("createRecallSettings returns the default scope, layout, and shortcut", () => {
   assert.deepEqual(createRecallSettings(), {
     defaultScope: "project",
+    pickerLayout: "balanced",
     shortcutEnabled: true,
     shortcutKey: "alt+r",
   });
@@ -24,6 +25,7 @@ void test("createRecallSettings returns the default scope and shortcut", () => {
 void test("normalizeRecallSettings repairs malformed values", () => {
   const settings = normalizeRecallSettings({
     defaultScope: "invalid",
+    pickerLayout: "massive",
     shortcutEnabled: "yes",
     shortcutKey: "",
   });
@@ -39,6 +41,7 @@ void test("saveRecallSettings and loadRecallSettings round-trip through the exte
     const next = {
       ...createRecallSettings(),
       defaultScope: "all" as const,
+      pickerLayout: "wide" as const,
       shortcutEnabled: false,
       shortcutKey: "alt+r",
     };
@@ -46,6 +49,7 @@ void test("saveRecallSettings and loadRecallSettings round-trip through the exte
     saveRecallSettings(next, settingsPath);
 
     assert.match(readFileSync(settingsPath, "utf-8"), /"defaultScope": "all"/);
+    assert.match(readFileSync(settingsPath, "utf-8"), /"pickerLayout": "wide"/);
     assert.deepEqual(loadRecallSettings(settingsPath), next);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -97,5 +101,6 @@ void test("buildRecallStatusText includes the settings path and active shortcut 
 
   assert.match(text, /Settings file: \/tmp\/recall-settings\.json/);
   assert.match(text, /Default scope: Project/);
+  assert.match(text, /Picker layout: Balanced/);
   assert.match(text, /Shortcut: Alt\+R \(configured\)/);
 });

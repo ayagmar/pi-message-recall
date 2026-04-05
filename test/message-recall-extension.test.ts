@@ -24,6 +24,7 @@ void test("extension skips shortcut registration when the saved key is invalid",
     saveRecallSettings(
       {
         defaultScope: "project",
+        pickerLayout: "balanced",
         shortcutEnabled: true,
         shortcutKey: "shift+tab",
       },

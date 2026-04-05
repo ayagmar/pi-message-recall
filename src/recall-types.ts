@@ -1,10 +1,12 @@
 import { type KeyId } from "@mariozechner/pi-tui";
-import { type RECALL_SCOPES } from "./recall-constants.js";
+import { type RECALL_PICKER_LAYOUTS, type RECALL_SCOPES } from "./recall-constants.js";
 
 export type RecallScope = (typeof RECALL_SCOPES)[number];
+export type RecallPickerLayoutPreference = (typeof RECALL_PICKER_LAYOUTS)[number];
 
 export interface RecallSettings {
   defaultScope: RecallScope;
+  pickerLayout: RecallPickerLayoutPreference;
   shortcutEnabled: boolean;
   shortcutKey: string;
 }

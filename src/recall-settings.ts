@@ -2,13 +2,20 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@mariozechner/pi-coding-agent";
 import {
+  DEFAULT_PICKER_LAYOUT,
   DEFAULT_SCOPE,
   DEFAULT_SHORTCUT_KEY,
   EXTENSION_NAME,
+  RECALL_PICKER_LAYOUTS,
   RECALL_SCOPES,
 } from "./recall-constants.js";
 import { formatShortcutKey } from "./recall-shortcut.js";
-import { type RecallScope, type RecallSettings, type ShortcutStatus } from "./recall-types.js";
+import {
+  type RecallPickerLayoutPreference,
+  type RecallScope,
+  type RecallSettings,
+  type ShortcutStatus,
+} from "./recall-types.js";
 
 export function getRecallSettingsPath(agentDir = getAgentDir()): string {
   return join(agentDir, "extensions", EXTENSION_NAME, "settings.json");
@@ -17,6 +24,7 @@ export function getRecallSettingsPath(agentDir = getAgentDir()): string {
 export function createRecallSettings(): RecallSettings {
   return {
     defaultScope: DEFAULT_SCOPE,
+    pickerLayout: DEFAULT_PICKER_LAYOUT,
     shortcutEnabled: true,
     shortcutKey: DEFAULT_SHORTCUT_KEY,
   };
@@ -28,6 +36,7 @@ export function normalizeRecallSettings(raw: unknown): RecallSettings {
 
   return {
     defaultScope: normalizeScope(input.defaultScope, defaults.defaultScope),
+    pickerLayout: normalizePickerLayout(input.pickerLayout, defaults.pickerLayout),
     shortcutEnabled: normalizeBoolean(input.shortcutEnabled, defaults.shortcutEnabled),
     shortcutKey: normalizeShortcutKeyValue(input.shortcutKey, defaults.shortcutKey),
   };
@@ -69,6 +78,17 @@ export function formatRecallScope(scope: RecallScope): string {
   }
 }
 
+export function formatRecallPickerLayout(layout: RecallPickerLayoutPreference): string {
+  switch (layout) {
+    case "compact":
+      return "Compact";
+    case "balanced":
+      return "Balanced";
+    case "wide":
+      return "Wide";
+  }
+}
+
 export function buildRecallStatusText(input: {
   settings: RecallSettings;
   settingsPath: string;
@@ -78,6 +98,7 @@ export function buildRecallStatusText(input: {
     "## Message Recall",
     `- Settings file: ${input.settingsPath}`,
     `- Default scope: ${formatRecallScope(input.settings.defaultScope)}`,
+    `- Picker layout: ${formatRecallPickerLayout(input.settings.pickerLayout)}`,
     `- Shortcut: ${formatShortcutSummary(input.shortcutStatus)}`,
     "- Picker scope toggle: Tab",
     "- Search modes: empty = recent, quotes = exact phrase, re:<pattern> = regex",
@@ -102,6 +123,19 @@ function normalizeScope(value: unknown, fallback: RecallScope): RecallScope {
   }
 
   return (RECALL_SCOPES as readonly string[]).includes(value) ? (value as RecallScope) : fallback;
+}
+
+function normalizePickerLayout(
+  value: unknown,
+  fallback: RecallPickerLayoutPreference
+): RecallPickerLayoutPreference {
+  if (typeof value !== "string") {
+    return fallback;
+  }
+
+  return (RECALL_PICKER_LAYOUTS as readonly string[]).includes(value)
+    ? (value as RecallPickerLayoutPreference)
+    : fallback;
 }
 
 function normalizeBoolean(value: unknown, fallback: boolean): boolean {

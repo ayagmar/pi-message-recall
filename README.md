@@ -13,12 +13,12 @@ It is built for the common flow: open a picker, search your old prompts, drop on
 - searches prior user text across persisted Pi sessions
 - includes the current live session state, not just old session files
 - quick scope switching in the picker with `Tab`
-- configurable default scope and shortcut via `/recall settings`
+- configurable default scope, picker layout, and shortcut via `/recall settings`
 - progressive loading and paginated results for large histories
 
 ## Install
 
-Install from npm (after the first npm release):
+Install from npm
 
 ```bash
 pi install npm:pi-message-recall
@@ -90,7 +90,8 @@ The picker opens as a centered native Pi overlay with:
 - scope chips for `Project`, `Repo`, and `All`
 - a scrolling native selection list
 - a preview pane for the currently selected prompt
-- fixed-height results and preview sections so scrolling does not resize the overlay
+- height-aware results and preview sections that expand to use taller, wider fullscreen overlays without resizing as you move around
+- a smarter preview that claims extra height for longer selected prompts when it helps
 - loading, empty, and error states inline in the dialog
 
 Keyboard flow:
@@ -137,6 +138,7 @@ Settings are stored here:
 Today the settings are:
 
 - default scope
+- picker layout (`Compact`, `Balanced`, or `Wide`)
 - shortcut enabled / disabled
 - shortcut key
 
