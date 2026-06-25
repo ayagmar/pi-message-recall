@@ -1,4 +1,4 @@
-import { type KeyId } from "@mariozechner/pi-tui";
+import { type KeyId } from "@earendil-works/pi-tui";
 import { type RECALL_PICKER_LAYOUTS, type RECALL_SCOPES } from "./recall-constants.js";
 
 export type RecallScope = (typeof RECALL_SCOPES)[number];

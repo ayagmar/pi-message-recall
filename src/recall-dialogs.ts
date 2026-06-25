@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { type ExtensionContext, type KeybindingsManager } from "@mariozechner/pi-coding-agent";
+import { type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
   type Focusable,
@@ -10,7 +10,7 @@ import {
   truncateToWidth,
   visibleWidth,
   wrapTextWithAnsi,
-} from "@mariozechner/pi-tui";
+} from "@earendil-works/pi-tui";
 import {
   DEFAULT_SHORTCUT_KEY,
   RECALL_PICKER_LAYOUTS,

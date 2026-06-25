@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
-import { SessionManager } from "@mariozechner/pi-coding-agent";
+import { SessionManager } from "@earendil-works/pi-coding-agent";
 import { LOAD_YIELD_INTERVAL, MAX_PREVIEW_LENGTH } from "./recall-constants.js";
 import {
   type HistoryDependencies,

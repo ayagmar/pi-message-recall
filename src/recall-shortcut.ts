@@ -1,4 +1,4 @@
-import { type KeyId } from "@mariozechner/pi-tui";
+import { type KeyId } from "@earendil-works/pi-tui";
 import { DEFAULT_SHORTCUT_KEY } from "./recall-constants.js";
 import {
   type RecallSettings,
