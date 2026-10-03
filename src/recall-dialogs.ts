@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { sep } from "node:path";
 import { type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
 import {
   type Component,
@@ -1449,10 +1450,18 @@ function formatRelativeTime(timestamp: number): string {
   return new Date(timestamp).toISOString().slice(0, 10);
 }
 
-function compactPath(path: string): string {
-  const home = homedir();
-  if (path.startsWith(home)) {
-    return `~${path.slice(home.length)}`;
+export function compactPath(path: string, home = homedir()): string {
+  if (!home) {
+    return path;
+  }
+
+  if (path === home) {
+    return "~";
+  }
+
+  const homePrefix = home.endsWith(sep) ? home : `${home}${sep}`;
+  if (path.startsWith(homePrefix)) {
+    return `~${sep}${path.slice(homePrefix.length)}`;
   }
 
   return path;

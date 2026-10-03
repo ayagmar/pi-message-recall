@@ -8,6 +8,7 @@ import { RESULT_PAGE_SIZE } from "../src/recall-constants.js";
 import {
   adjustRecallPickerLayoutForPreview,
   captureShortcutKey,
+  compactPath,
   openRecallSettingsFlow,
   resolveRecallPickerLayout,
   resolveRecallPickerWindow,
@@ -248,4 +249,12 @@ void test("dismissing the settings menu without changes returns nothing", async 
     }),
     undefined
   );
+});
+
+void test("compactPath only abbreviates paths inside the home directory", () => {
+  assert.equal(compactPath("/home/me", "/home/me"), "~");
+  assert.equal(compactPath("/home/me/project", "/home/me"), "~/project");
+  assert.equal(compactPath("/home/me/project", "/home/me/"), "~/project");
+  assert.equal(compactPath("/home/me2/project", "/home/me"), "/home/me2/project");
+  assert.equal(compactPath("/work/project", "/home/me"), "/work/project");
 });
