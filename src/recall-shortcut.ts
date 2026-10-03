@@ -1,4 +1,4 @@
-import { type KeyId } from "@earendil-works/pi-tui";
+import { type KeybindingsConfig, type KeyId } from "@earendil-works/pi-tui";
 import { DEFAULT_SHORTCUT_KEY } from "./recall-constants.js";
 import {
   type RecallSettings,
@@ -108,6 +108,29 @@ const VALID_KEY_ID_SPECIAL_KEYS = new Set<string>([
   "right",
 ]);
 
+// Mirrors RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS in Pi's extension runner, which is not
+// exported. Pi skips (with only a startup diagnostic) any extension shortcut bound to one of these.
+const PI_RESERVED_KEYBINDINGS = new Set<string>([
+  "app.interrupt",
+  "app.clear",
+  "app.exit",
+  "app.suspend",
+  "app.thinking.cycle",
+  "app.model.cycleForward",
+  "app.model.cycleBackward",
+  "app.model.select",
+  "app.tools.expand",
+  "app.thinking.toggle",
+  "app.editor.external",
+  "app.message.copy",
+  "app.message.followUp",
+  "tui.input.submit",
+  "tui.select.confirm",
+  "tui.select.cancel",
+  "tui.input.copy",
+  "tui.editor.deleteToLineEnd",
+]);
+
 interface ShortcutParts {
   modifiers: string[];
   key: string;
@@ -154,7 +177,34 @@ export function formatShortcutKey(value: string | undefined): string {
   return defaultParts ? formatShortcutParts(defaultParts) : DEFAULT_SHORTCUT_KEY;
 }
 
-export function validateShortcutKey(value: string): ShortcutValidationResult {
+/** Returns the reserved Pi action bound to `key`, if any. Modifier order does not matter. */
+export function findReservedShortcutConflict(
+  key: string,
+  keybindings: KeybindingsConfig | undefined
+): string | undefined {
+  const target = canonicalizeKeyId(key);
+  if (!target || !keybindings) {
+    return undefined;
+  }
+
+  for (const [keybinding, keys] of Object.entries(keybindings)) {
+    if (!PI_RESERVED_KEYBINDINGS.has(keybinding) || keys === undefined) {
+      continue;
+    }
+
+    const boundKeys: readonly string[] = Array.isArray(keys) ? keys : [keys];
+    if (boundKeys.some((boundKey) => canonicalizeKeyId(boundKey) === target)) {
+      return keybinding;
+    }
+  }
+
+  return undefined;
+}
+
+export function validateShortcutKey(
+  value: string,
+  keybindings?: KeybindingsConfig
+): ShortcutValidationResult {
   const normalized = normalizeShortcutKey(value);
   if (!normalized) {
     return { error: "Use a valid Pi key combo like Alt+R or Ctrl+Alt+R." };
@@ -172,10 +222,20 @@ export function validateShortcutKey(value: string): ShortcutValidationResult {
     };
   }
 
+  const reservedFor = findReservedShortcutConflict(normalized, keybindings);
+  if (reservedFor) {
+    return {
+      error: `${formatShortcutKey(normalized)} is reserved by Pi for ${reservedFor}. Choose another shortcut.`,
+    };
+  }
+
   return { normalized };
 }
 
-export function getShortcutStatus(settings: RecallSettings): ShortcutStatus {
+export function getShortcutStatus(
+  settings: RecallSettings,
+  keybindings?: KeybindingsConfig
+): ShortcutStatus {
   const label = formatShortcutKey(settings.shortcutKey);
 
   if (!settings.shortcutEnabled) {
@@ -195,11 +255,32 @@ export function getShortcutStatus(settings: RecallSettings): ShortcutStatus {
     };
   }
 
+  const reservedFor = findReservedShortcutConflict(normalized, keybindings);
+  if (reservedFor) {
+    return {
+      state: "conflict",
+      key: normalized,
+      label: formatShortcutKey(normalized),
+      detail: `Pi reserves it for ${reservedFor}, so Pi may ignore it. Use /recall settings to choose a new key.`,
+    };
+  }
+
   return {
     state: "active",
     key: normalized,
     label: formatShortcutKey(normalized),
   };
+}
+
+function canonicalizeKeyId(value: string): string | undefined {
+  const parts = parseShortcutParts(value);
+  if (!parts) {
+    return undefined;
+  }
+
+  const key = parts.key === "esc" ? "escape" : parts.key === "return" ? "enter" : parts.key;
+  const modifiers = [...new Set(parts.modifiers)].sort();
+  return [...modifiers, key].join("+");
 }
 
 function parseShortcutParts(value: string | undefined): ShortcutParts | undefined {

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { type KeybindingsConfig } from "@earendil-works/pi-tui";
 import {
   buildRecallStatusText,
   createRecallSettings,
@@ -11,7 +12,11 @@ import {
   normalizeRecallSettings,
   saveRecallSettings,
 } from "../src/recall-settings.js";
-import { getShortcutStatus, validateShortcutKey } from "../src/recall-shortcut.js";
+import {
+  findReservedShortcutConflict,
+  getShortcutStatus,
+  validateShortcutKey,
+} from "../src/recall-shortcut.js";
 
 void test("createRecallSettings returns the default scope, layout, and shortcut", () => {
   assert.deepEqual(createRecallSettings(), {
@@ -103,4 +108,42 @@ void test("buildRecallStatusText includes the settings path and active shortcut 
   assert.match(text, /Default scope: Project/);
   assert.match(text, /Picker layout: Balanced/);
   assert.match(text, /Shortcut: Alt\+R \(configured\)/);
+});
+
+void test("shortcut validation rejects keys Pi reserves for its own actions", () => {
+  const keybindings: KeybindingsConfig = {
+    "app.message.copy": "ctrl+x",
+    "app.model.cycleBackward": ["shift+ctrl+p"],
+    "app.thinking.save": "ctrl+s",
+  };
+
+  assert.match(
+    validateShortcutKey("ctrl+x", keybindings).error ?? "",
+    /Ctrl\+X is reserved by Pi for app\.message\.copy/
+  );
+  // Pi binds shift+ctrl+p; the modifier order must not hide the conflict.
+  assert.match(
+    validateShortcutKey("Ctrl+Shift+P", keybindings).error ?? "",
+    /reserved by Pi for app\.model\.cycleBackward/
+  );
+  // Non-reserved Pi bindings can be overridden by extensions.
+  assert.equal(validateShortcutKey("ctrl+s", keybindings).normalized, "ctrl+s");
+  assert.equal(validateShortcutKey("ctrl+x").normalized, "ctrl+x");
+  assert.equal(findReservedShortcutConflict("alt+r", keybindings), undefined);
+});
+
+void test("getShortcutStatus flags a saved shortcut that Pi reserves", () => {
+  const settings = { ...createRecallSettings(), shortcutKey: "ctrl+x" };
+  assert.equal(getShortcutStatus(settings).state, "active");
+
+  const status = getShortcutStatus(settings, { "app.message.copy": "ctrl+x" });
+  assert.equal(status.state, "conflict");
+  assert.match(status.detail, /reserves it for app\.message\.copy/);
+
+  const text = buildRecallStatusText({
+    settings,
+    settingsPath: "/tmp/s.json",
+    shortcutStatus: status,
+  });
+  assert.match(text, /Shortcut: Ctrl\+X \(conflicts with Pi: /);
 });

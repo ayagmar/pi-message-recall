@@ -162,3 +162,40 @@ void test("captureShortcutKey asks for the key as text outside the TUI", async (
   assert.equal(await captureShortcutKey(createCtx(undefined)), undefined);
   assert.equal(customCalls, 0);
 });
+
+void test("the shortcut capture dialog refuses keys Pi reserves", async () => {
+  const theme = {
+    fg: (_c: string, t: string) => t,
+    bg: (_c: string, t: string) => t,
+    bold: (t: string) => t,
+  };
+  let rendered: string[] = [];
+  const ctx = {
+    mode: "tui",
+    hasUI: true,
+    ui: {
+      custom: (
+        factory: (
+          tui: unknown,
+          theme: unknown,
+          keybindings: unknown,
+          done: (value: string | undefined) => void
+        ) => { handleInput(data: string): void; render(width: number): string[] }
+      ) =>
+        new Promise<string | undefined>((resolve) => {
+          const dialog = factory(
+            { requestRender: () => undefined },
+            theme,
+            { getResolvedBindings: () => ({ "app.message.copy": "ctrl+x" }) },
+            resolve
+          );
+          dialog.handleInput("\x18"); // ctrl+x
+          rendered = dialog.render(60);
+          dialog.handleInput("\x1br"); // alt+r
+        }),
+    },
+  } as unknown as ExtensionContext;
+
+  assert.equal(await captureShortcutKey(ctx), "alt+r");
+  assert.match(rendered.join("\n"), /Ctrl\+X is reserved by Pi for app\.message\.copy/);
+});

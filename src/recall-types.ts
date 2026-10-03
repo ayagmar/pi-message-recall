@@ -49,6 +49,13 @@ export type ShortcutStatus =
       state: "skipped";
       label: string;
       detail: string;
+    }
+  | {
+      /** Registered, but bound to a key that Pi reserves for one of its own actions. */
+      state: "conflict";
+      key: KeyId;
+      label: string;
+      detail: string;
     };
 
 export interface RecallLoadProgress {

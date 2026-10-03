@@ -3,6 +3,7 @@ import {
   type ExtensionCommandContext,
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
+import { getKeybindings, type KeybindingsConfig } from "@earendil-works/pi-tui";
 import { getRecallArgumentCompletions, parseRecallCommandArgs } from "./recall-command.js";
 import { EXTENSION_COMMAND } from "./recall-constants.js";
 import { openRecallPicker, openRecallSettingsFlow } from "./recall-dialogs.js";
@@ -30,11 +31,16 @@ export function createMessageRecallExtension(
       ctx: ExtensionContext,
       options: Parameters<typeof openRecallSettingsFlow>[1]
     ) => Promise<RecallSettingsFlowResult | undefined>;
+    /** Pi's resolved keybindings; only consulted in the TUI, where Pi has installed them. */
+    getKeybindings?: () => KeybindingsConfig;
   }
 ): void {
   const settingsPath = options?.settingsPath ?? getRecallSettingsPath();
   const showPicker = options?.openPicker ?? openRecallPicker;
   const showSettings = options?.openSettings ?? openRecallSettingsFlow;
+  const readKeybindings = options?.getKeybindings ?? readPiKeybindings;
+  const getRuntimeShortcutStatus = (ctx: ExtensionContext) =>
+    getShortcutStatus(settings, ctx.mode === "tui" ? readKeybindings() : undefined);
 
   let settings = loadRecallSettings(settingsPath);
   const startupShortcutStatus = getShortcutStatus(settings);
@@ -63,15 +69,29 @@ export function createMessageRecallExtension(
   }
 
   pi.on("session_start", (_event, ctx) => {
-    if (notifiedShortcutIssue || ctx.mode !== "tui" || startupShortcutStatus.state !== "skipped") {
+    if (notifiedShortcutIssue || ctx.mode !== "tui") {
       return;
     }
 
-    notifiedShortcutIssue = true;
-    ctx.ui.notify(
-      `Message Recall shortcut ${startupShortcutStatus.label} was not installed: ${startupShortcutStatus.detail} Use /${EXTENSION_COMMAND} or /${EXTENSION_COMMAND} settings.`,
-      "warning"
-    );
+    if (startupShortcutStatus.state === "skipped") {
+      notifiedShortcutIssue = true;
+      ctx.ui.notify(
+        `Message Recall shortcut ${startupShortcutStatus.label} was not installed: ${startupShortcutStatus.detail} Use /${EXTENSION_COMMAND} or /${EXTENSION_COMMAND} settings.`,
+        "warning"
+      );
+      return;
+    }
+
+    // Pi resolves keybindings (defaults plus keybindings.json) after extensions load, so reserved
+    // key conflicts can only be detected once the session starts.
+    const shortcutStatus = getRuntimeShortcutStatus(ctx);
+    if (startupShortcutStatus.state === "active" && shortcutStatus.state === "conflict") {
+      notifiedShortcutIssue = true;
+      ctx.ui.notify(
+        `Message Recall shortcut ${shortcutStatus.label} conflicts with Pi: ${shortcutStatus.detail} /${EXTENSION_COMMAND} always works.`,
+        "warning"
+      );
+    }
   });
 
   pi.registerCommand(EXTENSION_COMMAND, {
@@ -87,7 +107,7 @@ export function createMessageRecallExtension(
               buildRecallStatusText({
                 settings,
                 settingsPath,
-                shortcutStatus: getShortcutStatus(settings),
+                shortcutStatus: getRuntimeShortcutStatus(ctx),
               }),
               "info"
             );
@@ -203,5 +223,13 @@ async function runRecallPicker(
       ctx.ui.setEditorText(previousDraft);
     }
     throw error;
+  }
+}
+
+function readPiKeybindings(): KeybindingsConfig | undefined {
+  try {
+    return getKeybindings().getResolvedBindings();
+  } catch {
+    return undefined;
   }
 }

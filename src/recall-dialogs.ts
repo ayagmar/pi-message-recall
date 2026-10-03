@@ -4,6 +4,7 @@ import {
   type Component,
   type Focusable,
   Input,
+  type KeybindingsConfig,
   parseKey,
   type SelectItem,
   SelectList,
@@ -1162,9 +1163,10 @@ export async function captureShortcutKey(
   }
 
   return ctx.ui.custom<string | undefined>(
-    (tui, theme, _keybindings, done) => {
+    (tui, theme, keybindings, done) => {
       return new ShortcutCaptureDialog(theme, {
         ...(options?.currentValue ? { currentValue: options.currentValue } : {}),
+        keybindings: keybindings.getResolvedBindings(),
         requestRender: () => tui.requestRender(),
         onDone: done,
       });
@@ -1210,6 +1212,7 @@ class ShortcutCaptureDialog implements Component {
     private readonly theme: DialogTheme,
     private readonly callbacks: {
       currentValue?: string;
+      keybindings?: KeybindingsConfig;
       requestRender: () => void;
       onDone: (value: string | undefined) => void;
     }
@@ -1249,7 +1252,7 @@ class ShortcutCaptureDialog implements Component {
     }
 
     if (parsed === "backspace" || parsed === "delete") {
-      const validation = validateShortcutKey(DEFAULT_SHORTCUT_KEY);
+      const validation = validateShortcutKey(DEFAULT_SHORTCUT_KEY, this.callbacks.keybindings);
       if (validation.normalized) {
         this.callbacks.onDone(validation.normalized);
         return;
@@ -1260,7 +1263,7 @@ class ShortcutCaptureDialog implements Component {
       return;
     }
 
-    const validation = validateShortcutKey(parsed);
+    const validation = validateShortcutKey(parsed, this.callbacks.keybindings);
     if (validation.normalized) {
       this.callbacks.onDone(validation.normalized);
       return;

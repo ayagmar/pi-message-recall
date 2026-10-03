@@ -155,6 +155,7 @@ Shortcut changes are saved and then applied through a clean Pi reload.
 ### Shortcut behavior
 
 - default shortcut: `Alt+R`
+- the shortcut picker refuses keys that Pi reserves for its own actions (for example `Ctrl+C`, `Ctrl+X`, `Ctrl+O` or `Alt+Enter`, including any remaps in your `keybindings.json`); a previously saved reserved key is flagged at startup and in `/recall status`
 - `/recall` always remains available
 - `/recall` remains available even if the shortcut is disabled, invalid, or Pi refuses it on reload
 

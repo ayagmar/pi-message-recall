@@ -114,6 +114,8 @@ function formatShortcutSummary(shortcutStatus: ShortcutStatus): string {
       return `${shortcutStatus.label} (disabled)`;
     case "skipped":
       return `${formatShortcutKey(shortcutStatus.label)} (not loaded: ${shortcutStatus.detail})`;
+    case "conflict":
+      return `${shortcutStatus.label} (conflicts with Pi: ${shortcutStatus.detail})`;
   }
 }
 

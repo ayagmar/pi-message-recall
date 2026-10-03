@@ -201,3 +201,41 @@ void test("the skipped-shortcut warning is shown once, and only in the TUI", asy
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+void test("a saved shortcut that Pi reserves is reported at session start and in /recall status", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-extension-"));
+  const settingsPath = join(root, "settings.json");
+
+  try {
+    saveRecallSettings(
+      {
+        defaultScope: "project",
+        pickerLayout: "balanced",
+        shortcutEnabled: true,
+        shortcutKey: "ctrl+x",
+      },
+      settingsPath
+    );
+
+    const harness = createHarness();
+    createMessageRecallExtension(harness.pi, {
+      settingsPath,
+      getKeybindings: () => ({ "app.message.copy": "ctrl+x" }),
+    });
+    assert.ok(harness.shortcuts.has("ctrl+x"));
+
+    const [sessionStart] = harness.eventHandlers.get("session_start") ?? [];
+    assert.ok(sessionStart);
+    const ctx = createShortcutContext({ mode: "tui" });
+    await sessionStart({ type: "session_start", reason: "startup" }, ctx);
+    assert.equal(ctx.notifications.length, 1);
+    assert.match(ctx.notifications[0] ?? "", /Ctrl\+X conflicts with Pi: .*app\.message\.copy/);
+
+    const command = harness.commands.get(EXTENSION_COMMAND);
+    const statusCtx = createCommandContext();
+    await command?.handler("status", statusCtx);
+    assert.match(statusCtx.notifications.at(-1) ?? "", /Ctrl\+X \(conflicts with Pi: /);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
