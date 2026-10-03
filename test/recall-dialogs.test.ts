@@ -1,14 +1,19 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { RESULT_PAGE_SIZE } from "../src/recall-constants.js";
 import {
   adjustRecallPickerLayoutForPreview,
   captureShortcutKey,
+  openRecallSettingsFlow,
   resolveRecallPickerLayout,
   resolveRecallPickerWindow,
   resolveRetainedSelectionIndex,
 } from "../src/recall-dialogs.js";
+import { createRecallSettings, loadRecallSettings } from "../src/recall-settings.js";
 import { type RecallMessage } from "../src/recall-types.js";
 
 function expectedMaxHeight(rows: number): number {
@@ -198,4 +203,49 @@ void test("the shortcut capture dialog refuses keys Pi reserves", async () => {
 
   assert.equal(await captureShortcutKey(ctx), "alt+r");
   assert.match(rendered.join("\n"), /Ctrl\+X is reserved by Pi for app\.message\.copy/);
+});
+
+void test("settings changes made before dismissing the settings menu are returned", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-dialogs-"));
+  const settingsPath = join(root, "settings.json");
+  const answers = ["Default scope · Project", "All", "Picker layout · Balanced", "Wide", undefined];
+  const ctx = {
+    mode: "tui",
+    hasUI: true,
+    ui: {
+      select: async () => answers.shift(),
+      notify: () => undefined,
+    },
+  } as unknown as ExtensionContext;
+
+  try {
+    const result = await openRecallSettingsFlow(ctx, {
+      settings: createRecallSettings(),
+      settingsPath,
+    });
+
+    assert.deepEqual(answers, []);
+    assert.equal(result?.settings.defaultScope, "all");
+    assert.equal(result?.settings.pickerLayout, "wide");
+    assert.equal(result?.reloadRequired, false);
+    assert.deepEqual(loadRecallSettings(settingsPath), result?.settings);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+void test("dismissing the settings menu without changes returns nothing", async () => {
+  const ctx = {
+    mode: "tui",
+    hasUI: true,
+    ui: { select: async () => undefined },
+  } as unknown as ExtensionContext;
+
+  assert.equal(
+    await openRecallSettingsFlow(ctx, {
+      settings: createRecallSettings(),
+      settingsPath: "/nonexistent/settings.json",
+    }),
+    undefined
+  );
 });

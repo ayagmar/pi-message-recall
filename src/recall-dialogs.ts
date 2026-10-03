@@ -113,7 +113,8 @@ export async function openRecallSettingsFlow(
     ];
     const selected = await ctx.ui.select("Message Recall settings", choices);
     if (!selected) {
-      return undefined;
+      // Scope and layout changes are saved as soon as they are picked, so report them on exit too.
+      return settings === options.settings ? undefined : { settings, reloadRequired: false };
     }
 
     const index = choices.indexOf(selected);
