@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { EXTENSION_COMMAND } from "../src/recall-constants.js";
 import { createMessageRecallExtension } from "../src/index.js";
+import { EXTENSION_COMMAND } from "../src/recall-constants.js";
 import { saveRecallSettings } from "../src/recall-settings.js";
 import { createCommandContext, createHarness, createShortcutContext } from "./test-harness.js";
 

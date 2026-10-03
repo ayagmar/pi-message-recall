@@ -5,6 +5,7 @@ import {
 } from "@earendil-works/pi-coding-agent";
 import { getRecallArgumentCompletions, parseRecallCommandArgs } from "./recall-command.js";
 import { EXTENSION_COMMAND } from "./recall-constants.js";
+import { openRecallPicker, openRecallSettingsFlow } from "./recall-dialogs.js";
 import {
   buildRecallStatusText,
   getRecallSettingsPath,
@@ -12,7 +13,6 @@ import {
 } from "./recall-settings.js";
 import { getShortcutStatus } from "./recall-shortcut.js";
 import { type RecallMessage, type RecallSettingsFlowResult } from "./recall-types.js";
-import { openRecallPicker, openRecallSettingsFlow } from "./recall-dialogs.js";
 
 export default function messageRecallExtension(pi: ExtensionAPI): void {
   createMessageRecallExtension(pi);
