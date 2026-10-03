@@ -7,6 +7,7 @@ import { getKeybindings, type KeybindingsConfig } from "@earendil-works/pi-tui";
 import { getRecallArgumentCompletions, parseRecallCommandArgs } from "./recall-command.js";
 import { EXTENSION_COMMAND } from "./recall-constants.js";
 import { openRecallPicker, openRecallSettingsFlow } from "./recall-dialogs.js";
+import { findGitRepoRoot } from "./recall-history.js";
 import {
   buildRecallStatusText,
   getRecallSettingsPath,
@@ -44,6 +45,8 @@ export function createMessageRecallExtension(
   const showPicker = options?.openPicker ?? openRecallPicker;
   const showSettings = options?.openSettings ?? openRecallSettingsFlow;
   const readKeybindings = options?.getKeybindings ?? readPiKeybindings;
+  const findRepoRoot = (cwd: string) =>
+    findGitRepoRoot((command, args, execOptions) => pi.exec(command, args, execOptions), cwd);
   const getRuntimeShortcutStatus = (ctx: ExtensionContext) =>
     getShortcutStatus(settings, ctx.mode === "tui" ? readKeybindings() : undefined);
 
@@ -65,7 +68,7 @@ export function createMessageRecallExtension(
         }
 
         try {
-          await runRecallPicker(ctx, settings, showPicker);
+          await runRecallPicker(ctx, showPicker, { settings, findRepoRoot });
         } catch (error) {
           ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
         }
@@ -142,7 +145,12 @@ export function createMessageRecallExtension(
             }
 
             await ctx.waitForIdle();
-            await runRecallPicker(ctx, settings, showPicker, command.initialQuery);
+            await runRecallPicker(
+              ctx,
+              showPicker,
+              { settings, findRepoRoot },
+              command.initialQuery
+            );
             return;
           }
         }
@@ -195,11 +203,11 @@ async function handleSettingsCommand(
 
 async function runRecallPicker(
   ctx: ExtensionContext,
-  settings: RecallSettings,
   showPicker: (
     ctx: ExtensionContext,
     options: RecallPickerOptions
   ) => Promise<RecallMessage | undefined>,
+  pickerOptions: Pick<RecallPickerOptions, "settings" | "findRepoRoot">,
   initialQuery = ""
 ): Promise<void> {
   const previousDraft = ctx.ui.getEditorText();
@@ -208,7 +216,7 @@ async function runRecallPicker(
 
   try {
     const recalledMessage = await showPicker(ctx, {
-      settings,
+      ...pickerOptions,
       initialQuery: effectiveInitialQuery,
       previousDraft,
     });

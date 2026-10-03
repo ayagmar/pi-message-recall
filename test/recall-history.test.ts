@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, posix, win32 } from "node:path";
+import { join, posix, resolve, win32 } from "node:path";
 import test from "node:test";
+import { type ExecOptions } from "@earendil-works/pi-coding-agent";
 import {
+  type ExecCommand,
   extractUserMessages,
+  findGitRepoRoot,
   getAvailableScopes,
   isWithinRoot,
   loadMessagesForScope,
@@ -176,7 +179,6 @@ void test("loadMessagesForScope includes the current live session alongside pers
         cwd: session.cwd,
       };
     },
-    findRepoRoot: () => undefined,
     yieldToUi: async () => {},
   };
 
@@ -272,7 +274,6 @@ void test("repo scope filters sessions to the current git root", async () => {
         cwd: session.cwd,
       };
     },
-    findRepoRoot: () => "/work/repo",
     yieldToUi: async () => {},
   };
 
@@ -281,6 +282,7 @@ void test("repo scope filters sessions to the current git root", async () => {
       scope: "repo",
       currentCwd: "/work/repo/app",
       currentSessionDir: "/tmp/sessions",
+      repoRoot: "/work/repo",
       currentSessionEntries: [
         {
           type: "message",
@@ -305,16 +307,76 @@ void test("repo scope filters sessions to the current git root", async () => {
 });
 
 void test("available scopes expose repo only when git metadata is available", () => {
-  assert.deepEqual(getAvailableScopes("/work/repo/app", { findRepoRoot: () => "/work/repo" }), [
-    "project",
-    "repo",
-    "all",
-  ]);
-  assert.deepEqual(getAvailableScopes("/work/misc", { findRepoRoot: () => undefined }), [
-    "project",
-    "all",
-  ]);
+  assert.deepEqual(getAvailableScopes("/work/repo"), ["project", "repo", "all"]);
+  assert.deepEqual(getAvailableScopes(undefined), ["project", "all"]);
   assert.equal(resolveRecallScope("repo", ["project", "all"]), "project");
+});
+
+void test("findGitRepoRoot runs git asynchronously with a timeout", async () => {
+  const calls: { command: string; args: string[]; options: ExecOptions | undefined }[] = [];
+  const exec: ExecCommand = async (command, args, options) => {
+    calls.push({ command, args, options });
+    return { stdout: "/work/repo\n", code: 0, killed: false };
+  };
+
+  assert.equal(await findGitRepoRoot(exec, "/work/repo/app"), resolve("/work/repo"));
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.command, "git");
+  assert.deepEqual(calls[0]?.args, ["-C", "/work/repo/app", "rev-parse", "--show-toplevel"]);
+  assert.ok((calls[0]?.options?.timeout ?? 0) > 0);
+});
+
+void test("findGitRepoRoot hides repo scope when git fails, times out or is missing", async () => {
+  const outcomes: ExecCommand[] = [
+    // Not a repository.
+    async () => ({ stdout: "", code: 128, killed: false }),
+    // Killed by the timeout or the abort signal.
+    async () => ({ stdout: "/work/repo\n", code: 0, killed: true }),
+    // Empty output.
+    async () => ({ stdout: "  \n", code: 0, killed: false }),
+    async () => {
+      throw new Error("spawn git ENOENT");
+    },
+  ];
+
+  for (const exec of outcomes) {
+    const repoRoot = await findGitRepoRoot(exec, "/work/misc");
+    assert.equal(repoRoot, undefined);
+    assert.deepEqual(getAvailableScopes(repoRoot), ["project", "all"]);
+  }
+});
+
+void test("repo scope without a resolved repo root loads nothing and explains why", async () => {
+  let listed = 0;
+  const dependencies: HistoryDependencies = {
+    list: async () => {
+      listed += 1;
+      return [];
+    },
+    listAll: async () => {
+      listed += 1;
+      return [];
+    },
+    readSession: async () => {
+      throw new Error("no sessions to read");
+    },
+    yieldToUi: async () => {},
+  };
+
+  const result = await loadMessagesForScope(
+    {
+      scope: "repo",
+      currentCwd: "/work/misc",
+      currentSessionDir: "/tmp/sessions",
+      currentSessionEntries: [],
+    },
+    { onBatch: () => {}, onProgress: () => {} },
+    { dependencies }
+  );
+
+  assert.equal(result.totalSessions, 0);
+  assert.match(result.unavailableReason ?? "", /git repository/i);
+  assert.equal(listed, 0);
 });
 
 void test("readSessionFile reads an old-version session without rewriting it", async () => {
@@ -403,7 +465,6 @@ void test("loadMessagesForScope passes the abort signal to session listing", asy
     readSession: async () => {
       throw new Error("no sessions to read");
     },
-    findRepoRoot: () => undefined,
     yieldToUi: async () => {},
   };
 
@@ -484,7 +545,6 @@ void test("all and repo scopes list every project in a custom session directory"
         cwd: session.cwd,
       };
     },
-    findRepoRoot: () => "/work/repo",
     yieldToUi: async () => {},
   };
 
@@ -497,6 +557,7 @@ void test("all and repo scopes list every project in a custom session directory"
         currentSessionDir: customDir,
         currentSessionEntries: [],
         currentSessionFile: `${customDir}/current.jsonl`,
+        repoRoot: "/work/repo",
       },
       {
         onBatch: (messages) => {

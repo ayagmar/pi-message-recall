@@ -50,7 +50,9 @@ export async function openRecallPicker(
   ctx: ExtensionContext,
   options: RecallPickerOptions
 ): Promise<RecallMessage | undefined> {
-  const availableScopes = getAvailableScopes(ctx.cwd);
+  // Resolved once per open: it decides whether Repo scope is offered and filters its sessions.
+  const repoRoot = await options.findRepoRoot(ctx.cwd);
+  const availableScopes = getAvailableScopes(repoRoot);
   const initialScope = resolveRecallScope(options.settings.defaultScope, availableScopes);
   const layoutPreset = getRecallPickerLayoutPreset(options.settings.pickerLayout);
 
@@ -72,6 +74,7 @@ export async function openRecallPicker(
           currentSessionEntries: ctx.sessionManager.getEntries() as SessionEntryLike[],
           currentSessionFile: ctx.sessionManager.getSessionFile() ?? undefined,
           currentSessionName: ctx.sessionManager.getSessionName() ?? undefined,
+          repoRoot,
         },
         {
           onDone: (value) => {
@@ -503,6 +506,7 @@ class RecallPickerDialog implements Component, Focusable {
       currentSessionEntries: SessionEntryLike[];
       currentSessionFile: string | undefined;
       currentSessionName: string | undefined;
+      repoRoot: string | undefined;
     },
     private readonly callbacks: {
       onDone: (value: RecallMessage | undefined) => void;
@@ -653,6 +657,7 @@ class RecallPickerDialog implements Component, Focusable {
           ...(this.options.currentSessionName
             ? { currentSessionName: this.options.currentSessionName }
             : {}),
+          ...(this.options.repoRoot ? { repoRoot: this.options.repoRoot } : {}),
         },
         {
           onBatch: (messages, progress) => {

@@ -1,13 +1,18 @@
-import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, type PlatformPath, relative, resolve, sep } from "node:path";
 import {
+  type ExecOptions,
+  type ExecResult,
   getAgentDir,
   migrateSessionEntries,
   parseSessionEntries,
   SessionManager,
 } from "@earendil-works/pi-coding-agent";
-import { LOAD_YIELD_INTERVAL, MAX_PREVIEW_LENGTH } from "./recall-constants.js";
+import {
+  LOAD_YIELD_INTERVAL,
+  MAX_PREVIEW_LENGTH,
+  REPO_ROOT_LOOKUP_TIMEOUT_MS,
+} from "./recall-constants.js";
 import {
   type HistoryDependencies,
   type RecallHistoryRequest,
@@ -46,7 +51,6 @@ const defaultHistoryDependencies: HistoryDependencies = {
     }));
   },
   readSession: readSessionFile,
-  findRepoRoot: findGitRoot,
   yieldToUi: () => new Promise((resolveYield) => setTimeout(resolveYield, 0)),
 };
 
@@ -69,12 +73,10 @@ export function resolveCustomSessionDir(
   return dirname(resolved) === resolve(agentDir, "sessions") ? undefined : resolved;
 }
 
-export function getAvailableScopes(
-  cwd: string,
-  dependencies: Pick<HistoryDependencies, "findRepoRoot"> = defaultHistoryDependencies
-): RecallScope[] {
+/** The scopes the picker offers; Repo needs the git root of the current cwd. */
+export function getAvailableScopes(repoRoot: string | undefined): RecallScope[] {
   const scopes: RecallScope[] = ["project"];
-  if (dependencies.findRepoRoot(cwd)) {
+  if (repoRoot) {
     scopes.push("repo");
   }
   scopes.push("all");
@@ -239,13 +241,28 @@ export async function readSessionFile(
   };
 }
 
-function findGitRoot(cwd: string): string | undefined {
+export type ExecCommand = (
+  command: string,
+  args: string[],
+  options?: ExecOptions
+) => Promise<Pick<ExecResult, "stdout" | "code" | "killed">>;
+
+/**
+ * The git root of `cwd`, or undefined outside a repository. Asynchronous and time-limited (via
+ * pi.exec) so a slow or hung git never blocks the TUI.
+ */
+export async function findGitRepoRoot(
+  exec: ExecCommand,
+  cwd: string,
+  signal?: AbortSignal
+): Promise<string | undefined> {
   try {
-    const result = execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return result ? resolve(result) : undefined;
+    const result = await exec("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+      timeout: REPO_ROOT_LOOKUP_TIMEOUT_MS,
+      ...(signal ? { signal } : {}),
+    });
+    const root = result.stdout.trim();
+    return result.code === 0 && !result.killed && root ? resolve(root) : undefined;
   } catch {
     return undefined;
   }
@@ -330,22 +347,22 @@ async function listSessionsForScope(
     return { sessions: attachCurrentSession(sessions, request) };
   }
 
+  const repoRoot = request.repoRoot;
+  if (request.scope === "repo" && !repoRoot) {
+    return {
+      sessions: [],
+      unavailableReason: "Repo scope is only available inside a git repository.",
+    };
+  }
+
   const [allSessions, projectSessions] = await Promise.all([
     dependencies.listAll(request.currentSessionDir, signal),
     dependencies.list(request.currentCwd, request.currentSessionDir, signal),
   ]);
   const combined = dedupeSessions([...allSessions, ...projectSessions]);
 
-  if (request.scope === "all") {
+  if (request.scope === "all" || !repoRoot) {
     return { sessions: attachCurrentSession(combined, request) };
-  }
-
-  const repoRoot = dependencies.findRepoRoot(request.currentCwd);
-  if (!repoRoot) {
-    return {
-      sessions: [],
-      unavailableReason: "Repo scope is only available inside a git repository.",
-    };
   }
 
   const filtered = combined.filter((session) => isWithinRoot(repoRoot, session.cwd));

@@ -100,6 +100,8 @@ export interface RecallHistoryRequest {
   currentSessionEntries: SessionEntryLike[];
   currentSessionFile?: string;
   currentSessionName?: string;
+  /** Git root of currentCwd, resolved once when the picker opens; required by Repo scope. */
+  repoRoot?: string;
 }
 
 export interface HistoryDependencies {
@@ -107,7 +109,6 @@ export interface HistoryDependencies {
   /** Lists every project's sessions; `sessionDir` is the current session's directory. */
   listAll(sessionDir: string | undefined, signal?: AbortSignal): Promise<RecallSessionInfo[]>;
   readSession(path: string, signal?: AbortSignal): Promise<RecallSessionData>;
-  findRepoRoot(cwd: string): string | undefined;
   yieldToUi(): Promise<void>;
 }
 
@@ -115,6 +116,8 @@ export interface RecallPickerOptions {
   initialQuery: string;
   previousDraft: string;
   settings: RecallSettings;
+  /** Resolves the git root of a cwd (undefined outside a repository). */
+  findRepoRoot(cwd: string): Promise<string | undefined>;
 }
 
 export interface RecallSettingsFlowResult {
