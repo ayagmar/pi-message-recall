@@ -1424,8 +1424,8 @@ function formatMessageDescription(message: RecallMessage): string {
   return parts.join(" · ");
 }
 
-function formatRelativeTime(timestamp: number): string {
-  const deltaMs = Math.max(0, Date.now() - timestamp);
+export function formatRelativeTime(timestamp: number, now = Date.now()): string {
+  const deltaMs = Math.max(0, now - timestamp);
   const minute = 60_000;
   const hour = 60 * minute;
   const day = 24 * hour;
@@ -1447,7 +1447,11 @@ function formatRelativeTime(timestamp: number): string {
     return `${Math.floor(deltaMs / day)}d ago`;
   }
 
-  return new Date(timestamp).toISOString().slice(0, 10);
+  // Local calendar date: toISOString() is UTC and can be a day off from what the user expects.
+  const date = new Date(timestamp);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const dayOfMonth = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${dayOfMonth}`;
 }
 
 export function compactPath(path: string, home = homedir()): string {

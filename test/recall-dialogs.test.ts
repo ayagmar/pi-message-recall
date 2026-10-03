@@ -9,6 +9,7 @@ import {
   adjustRecallPickerLayoutForPreview,
   captureShortcutKey,
   compactPath,
+  formatRelativeTime,
   openRecallSettingsFlow,
   resolveRecallPickerLayout,
   resolveRecallPickerWindow,
@@ -257,4 +258,25 @@ void test("compactPath only abbreviates paths inside the home directory", () => 
   assert.equal(compactPath("/home/me/project", "/home/me/"), "~/project");
   assert.equal(compactPath("/home/me2/project", "/home/me"), "/home/me2/project");
   assert.equal(compactPath("/work/project", "/home/me"), "/work/project");
+});
+
+void test("formatRelativeTime shows older prompts with their local calendar date", () => {
+  const previousTz = process.env.TZ;
+  process.env.TZ = "America/Los_Angeles";
+
+  try {
+    // 03:00 UTC on Jan 2 is still Jan 1 in Los Angeles.
+    const timestamp = Date.UTC(2026, 0, 2, 3, 0);
+    const day = 24 * 60 * 60 * 1000;
+
+    assert.equal(formatRelativeTime(timestamp, timestamp + 30_000), "just now");
+    assert.equal(formatRelativeTime(timestamp, timestamp + 2 * day), "2d ago");
+    assert.equal(formatRelativeTime(timestamp, timestamp + 30 * day), "2026-01-01");
+  } finally {
+    if (previousTz === undefined) {
+      delete process.env.TZ;
+    } else {
+      process.env.TZ = previousTz;
+    }
+  }
 });
