@@ -13,7 +13,12 @@ import {
   loadRecallSettings,
 } from "./recall-settings.js";
 import { getShortcutStatus } from "./recall-shortcut.js";
-import { type RecallMessage, type RecallSettingsFlowResult } from "./recall-types.js";
+import {
+  type RecallMessage,
+  type RecallPickerOptions,
+  type RecallSettings,
+  type RecallSettingsFlowResult,
+} from "./recall-types.js";
 
 export default function messageRecallExtension(pi: ExtensionAPI): void {
   createMessageRecallExtension(pi);
@@ -25,7 +30,7 @@ export function createMessageRecallExtension(
     settingsPath?: string;
     openPicker?: (
       ctx: ExtensionContext,
-      options: Parameters<typeof openRecallPicker>[1]
+      options: RecallPickerOptions
     ) => Promise<RecallMessage | undefined>;
     openSettings?: (
       ctx: ExtensionContext,
@@ -151,13 +156,13 @@ export function createMessageRecallExtension(
 async function handleSettingsCommand(
   ctx: ExtensionCommandContext,
   options: {
-    settings: Parameters<typeof buildRecallStatusText>[0]["settings"];
+    settings: RecallSettings;
     settingsPath: string;
     openSettings: (
       ctx: ExtensionContext,
       options: Parameters<typeof openRecallSettingsFlow>[1]
     ) => Promise<RecallSettingsFlowResult | undefined>;
-    onSettingsChange: (settings: Parameters<typeof buildRecallStatusText>[0]["settings"]) => void;
+    onSettingsChange: (settings: RecallSettings) => void;
   }
 ): Promise<void> {
   if (!ctx.hasUI) {
@@ -190,10 +195,10 @@ async function handleSettingsCommand(
 
 async function runRecallPicker(
   ctx: ExtensionContext,
-  settings: Parameters<typeof buildRecallStatusText>[0]["settings"],
+  settings: RecallSettings,
   showPicker: (
     ctx: ExtensionContext,
-    options: Parameters<typeof openRecallPicker>[1]
+    options: RecallPickerOptions
   ) => Promise<RecallMessage | undefined>,
   initialQuery = ""
 ): Promise<void> {

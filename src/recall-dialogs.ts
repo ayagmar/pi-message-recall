@@ -43,6 +43,7 @@ import {
   type RecallSearchResult,
   type RecallSettings,
   type RecallSettingsFlowResult,
+  type SessionEntryLike,
 } from "./recall-types.js";
 
 export async function openRecallPicker(
@@ -68,9 +69,7 @@ export async function openRecallPicker(
           // All branches on purpose (not getBranch()): prompts from abandoned branches are still
           // text the user typed. Only role "user" message entries are read, so system messages and
           // usage/context_edit entries are ignored.
-          currentSessionEntries: ctx.sessionManager.getEntries() as Parameters<
-            typeof loadMessagesForScope
-          >[0]["currentSessionEntries"],
+          currentSessionEntries: ctx.sessionManager.getEntries() as SessionEntryLike[],
           currentSessionFile: ctx.sessionManager.getSessionFile() ?? undefined,
           currentSessionName: ctx.sessionManager.getSessionName() ?? undefined,
         },
@@ -501,7 +500,7 @@ class RecallPickerDialog implements Component, Focusable {
       layoutPreference: RecallPickerLayoutPreference;
       currentCwd: string;
       currentSessionDir: string;
-      currentSessionEntries: Parameters<typeof loadMessagesForScope>[0]["currentSessionEntries"];
+      currentSessionEntries: SessionEntryLike[];
       currentSessionFile: string | undefined;
       currentSessionName: string | undefined;
     },

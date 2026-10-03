@@ -9,7 +9,6 @@ import {
   RECALL_PICKER_LAYOUTS,
   RECALL_SCOPES,
 } from "./recall-constants.js";
-import { formatShortcutKey } from "./recall-shortcut.js";
 import {
   type RecallPickerLayoutPreference,
   type RecallScope,
@@ -113,7 +112,7 @@ function formatShortcutSummary(shortcutStatus: ShortcutStatus): string {
     case "disabled":
       return `${shortcutStatus.label} (disabled)`;
     case "skipped":
-      return `${formatShortcutKey(shortcutStatus.label)} (not loaded: ${shortcutStatus.detail})`;
+      return `${shortcutStatus.label} (not loaded: ${shortcutStatus.detail})`;
     case "conflict":
       return `${shortcutStatus.label} (conflicts with Pi: ${shortcutStatus.detail})`;
   }

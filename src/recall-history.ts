@@ -216,7 +216,7 @@ export async function readSessionFile(
   };
 }
 
-export function findGitRoot(cwd: string): string | undefined {
+function findGitRoot(cwd: string): string | undefined {
   try {
     const result = execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
       encoding: "utf-8",
