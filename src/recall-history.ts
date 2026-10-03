@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { isAbsolute, type PlatformPath, relative, resolve, sep } from "node:path";
 import {
   migrateSessionEntries,
   parseSessionEntries,
@@ -384,10 +384,26 @@ function compareSessions(left: RecallSessionInfo, right: RecallSessionInfo): num
   return right.modified.getTime() - left.modified.getTime();
 }
 
-function isWithinRoot(root: string, candidate: string): boolean {
-  const normalizedRoot = resolve(root);
-  const normalizedCandidate = resolve(candidate);
+type PathApi = Pick<PlatformPath, "isAbsolute" | "relative" | "resolve" | "sep">;
+
+const platformPath: PathApi = { isAbsolute, relative, resolve, sep };
+
+/**
+ * Whether `candidate` is `root` or lives below it. Uses path.relative so Windows separators and
+ * drive-letter case work. An empty cwd (a session header without one) is never inside the repo.
+ */
+export function isWithinRoot(
+  root: string,
+  candidate: string,
+  pathApi: PathApi = platformPath
+): boolean {
+  if (!candidate) {
+    return false;
+  }
+
+  const fromRoot = pathApi.relative(pathApi.resolve(root), pathApi.resolve(candidate));
   return (
-    normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`)
+    fromRoot === "" ||
+    (fromRoot !== ".." && !fromRoot.startsWith(`..${pathApi.sep}`) && !pathApi.isAbsolute(fromRoot))
   );
 }

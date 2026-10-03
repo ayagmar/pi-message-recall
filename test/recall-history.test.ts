@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, posix, win32 } from "node:path";
 import test from "node:test";
 import {
   extractUserMessages,
   getAvailableScopes,
+  isWithinRoot,
   loadMessagesForScope,
   readSessionFile,
   resolveRecallScope,
@@ -367,4 +368,21 @@ void test("readSessionFile rejects files that are not Pi sessions", async () => 
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+void test("isWithinRoot matches the repo root and its subdirectories only", () => {
+  assert.equal(isWithinRoot("/work/repo", "/work/repo", posix), true);
+  assert.equal(isWithinRoot("/work/repo", "/work/repo/app", posix), true);
+  assert.equal(isWithinRoot("/work/repo", "/work/repo/..data", posix), true);
+  assert.equal(isWithinRoot("/work/repo", "/work/repo-other", posix), false);
+  assert.equal(isWithinRoot("/work/repo", "/work", posix), false);
+  assert.equal(isWithinRoot("/work/repo", "", posix), false);
+});
+
+void test("isWithinRoot handles Windows paths", () => {
+  // `git rev-parse --show-toplevel` prints forward slashes; session cwds use backslashes.
+  assert.equal(isWithinRoot("C:/Users/me/repo", "C:\\Users\\me\\repo\\app", win32), true);
+  assert.equal(isWithinRoot("C:/Users/me/repo", "c:\\users\\me\\repo", win32), true);
+  assert.equal(isWithinRoot("C:/Users/me/repo", "C:\\Users\\me\\repo-other", win32), false);
+  assert.equal(isWithinRoot("C:/Users/me/repo", "D:\\Users\\me\\repo", win32), false);
 });
