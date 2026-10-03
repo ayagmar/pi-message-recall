@@ -40,12 +40,7 @@
     "test": "node --import=tsx --test ./test/*.test.ts",
     "smoke-test": "node --import=tsx ./scripts/smoke-test.mjs",
     "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test && pnpm run smoke-test",
-    "release": "release-it",
-    "release:patch": "release-it patch",
-    "release:minor": "release-it minor",
-    "release:major": "release-it major",
-    "release:first": "release-it --first-release",
-    "release:ci": "node --import=tsx ./scripts/release-ci.ts"
+    "release:dry": "release-it --ci --dry-run"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
