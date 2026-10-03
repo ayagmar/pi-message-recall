@@ -1,6 +1,12 @@
 import { homedir } from "node:os";
 import { sep } from "node:path";
-import { type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
+import {
+  type ExtensionContext,
+  type KeybindingsManager,
+  keyHint,
+  keyText,
+  rawKeyHint,
+} from "@earendil-works/pi-coding-agent";
 import {
   type Component,
   type Focusable,
@@ -563,7 +569,7 @@ class RecallPickerDialog implements Component, Focusable {
         truncateToWidth(this.buildPreviewLine(innerWidth, layout.previewBodyLines), innerWidth)
       ),
       ...this.renderPreviewLines(innerWidth, layout.previewLines, layout.previewBodyLines),
-      this.theme.fg("dim", truncateToWidth(this.buildHelpLine(layout.pageSize), innerWidth)),
+      truncateToWidth(this.buildHelpLine(layout.pageSize), innerWidth),
     ];
 
     return renderDialogBox(this.theme, innerWidth, lines);
@@ -1148,23 +1154,21 @@ class RecallPickerDialog implements Component, Focusable {
   }
 
   private buildHelpLine(pageSize: number): string {
-    const parts = [
-      formatKeybindingPair(this.keybindings, "tui.select.up", "tui.select.down", "move"),
-    ];
+    const parts = [rawKeyHint(`${keyText("tui.select.up")}/${keyText("tui.select.down")}`, "move")];
 
     if (this.state.results.length > pageSize) {
       parts.push(
-        formatKeybindingPair(this.keybindings, "tui.select.pageUp", "tui.select.pageDown", "pages")
+        rawKeyHint(`${keyText("tui.select.pageUp")}/${keyText("tui.select.pageDown")}`, "pages")
       );
     }
 
     parts.push(
-      formatKeybindingHint(this.keybindings, "tui.input.tab", "scope"),
-      formatKeybindingHint(this.keybindings, "tui.select.confirm", "restore"),
-      formatKeybindingHint(this.keybindings, "tui.select.cancel", "cancel")
+      keyHint("tui.input.tab", "scope"),
+      keyHint("tui.select.confirm", "restore"),
+      keyHint("tui.select.cancel", "cancel")
     );
 
-    return parts.join(" · ");
+    return parts.join(this.theme.fg("dim", " · "));
   }
 
   private highlightSelected(text: string): string {
@@ -1524,34 +1528,4 @@ function fitBlockLines(lines: string[], lineCount: number): string[] {
     next.push("");
   }
   return next;
-}
-
-type DialogKeybinding = Parameters<KeybindingsManager["getKeys"]>[0];
-
-function formatKeybindingPair(
-  keybindings: KeybindingsManager,
-  first: DialogKeybinding,
-  second: DialogKeybinding,
-  description: string
-): string {
-  return `${formatKeyLabelList(keybindings, first)}/${formatKeyLabelList(keybindings, second)} ${description}`;
-}
-
-function formatKeybindingHint(
-  keybindings: KeybindingsManager,
-  keybinding: DialogKeybinding,
-  description: string
-): string {
-  return `${formatKeyLabelList(keybindings, keybinding)} ${description}`;
-}
-
-function formatKeyLabelList(keybindings: KeybindingsManager, keybinding: DialogKeybinding): string {
-  return keybindings.getKeys(keybinding).map(formatKeyLabel).join("/");
-}
-
-function formatKeyLabel(key: string): string {
-  return formatShortcutKey(key)
-    .replace("PageUp", "PgUp")
-    .replace("PageDown", "PgDn")
-    .replace("Escape", "Esc");
 }
