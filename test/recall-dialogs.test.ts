@@ -165,7 +165,7 @@ void test("captureShortcutKey asks for the key as text outside the TUI", async (
   assert.deepEqual(inputs, ["alt+r"]);
 
   assert.equal(await captureShortcutKey(createCtx("r")), undefined);
-  assert.match(notifications.at(-1) ?? "", /must include ctrl and\/or alt/i);
+  assert.match(notifications.at(-1) ?? "", /must include ctrl, alt or super/i);
 
   assert.equal(await captureShortcutKey(createCtx(undefined)), undefined);
   assert.equal(customCalls, 0);

@@ -78,7 +78,32 @@ void test("loadRecallSettings falls back to defaults when settings.json is inval
 void test("shortcut validation accepts valid combos and rejects plain typing", () => {
   assert.equal(validateShortcutKey("ctrl+r").normalized, "ctrl+r");
   assert.equal(validateShortcutKey("alt+r").normalized, "alt+r");
-  assert.match(validateShortcutKey("r").error ?? "", /must include ctrl and\/or alt/i);
+  assert.match(validateShortcutKey("r").error ?? "", /must include ctrl, alt or super/i);
+  assert.match(validateShortcutKey("shift+r").error ?? "", /must include ctrl, alt or super/i);
+});
+
+void test("shortcut validation accepts every Pi key id Recall supports", () => {
+  // Pi's KeyId union includes the super modifier, F1-F12, Insert and Clear.
+  assert.equal(validateShortcutKey("super+k").normalized, "super+k");
+  assert.equal(validateShortcutKey("Super+Alt+K").normalized, "alt+super+k");
+  assert.equal(validateShortcutKey("ctrl+f5").normalized, "ctrl+f5");
+  assert.equal(validateShortcutKey("alt+insert").normalized, "alt+insert");
+  assert.equal(validateShortcutKey("ctrl+clear").normalized, "ctrl+clear");
+  // KeyId spells these in camelCase, which is also what parseKey() reports.
+  assert.equal(validateShortcutKey("ctrl+pageup").normalized, "ctrl+pageUp");
+  assert.equal(validateShortcutKey("ctrl+pageDown").normalized, "ctrl+pageDown");
+  assert.equal(validateShortcutKey("ctrl+esc").normalized, "ctrl+escape");
+  // Symbol keys stay out: terminals report Ctrl+symbol combos inconsistently.
+  assert.match(validateShortcutKey("ctrl+/").error ?? "", /letter, digit, or a supported/i);
+  assert.match(validateShortcutKey("hyper+r").error ?? "", /valid pi key combo/i);
+
+  const status = getShortcutStatus({ ...createRecallSettings(), shortcutKey: "super+f12" });
+  assert.equal(status.state, "active");
+  assert.equal(status.label, "Super+F12");
+  assert.equal(
+    getShortcutStatus({ ...createRecallSettings(), shortcutKey: "ctrl+pageup" }).label,
+    "Ctrl+PageUp"
+  );
 });
 
 void test("getShortcutStatus reports active and skipped shortcuts", () => {

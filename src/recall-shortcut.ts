@@ -6,40 +6,37 @@ import {
   type ShortcutValidationResult,
 } from "./recall-types.js";
 
-const MODIFIER_ORDER = ["ctrl", "shift", "alt"] as const;
+// Modifiers and keys accepted by Pi's KeyId union (@earendil-works/pi-tui keys.ts), which only
+// exists as a type. Keep in sync when Pi adds keys.
+const MODIFIER_ORDER = ["ctrl", "shift", "alt", "super"] as const;
 const MODIFIERS = new Set<string>(MODIFIER_ORDER);
-const SPECIAL_KEYS = new Set<string>([
-  "escape",
-  "esc",
-  "enter",
-  "return",
-  "tab",
-  "space",
-  "backspace",
-  "delete",
-  "insert",
-  "clear",
-  "home",
-  "end",
-  "pageup",
-  "pagedown",
-  "up",
-  "down",
-  "left",
-  "right",
-  "f1",
-  "f2",
-  "f3",
-  "f4",
-  "f5",
-  "f6",
-  "f7",
-  "f8",
-  "f9",
-  "f10",
-  "f11",
-  "f12",
+// Modifiers that keep a shortcut from interfering with normal typing.
+const SHORTCUT_MODIFIERS = new Set<string>(["ctrl", "alt", "super"]);
+// Lowercase spelling -> KeyId spelling. matchesKey() lowercases key ids, but the KeyId union
+// spells PageUp/PageDown in camelCase.
+const SPECIAL_KEYS = new Map<string, string>([
+  ["escape", "escape"],
+  ["esc", "escape"],
+  ["enter", "enter"],
+  ["return", "enter"],
+  ["tab", "tab"],
+  ["space", "space"],
+  ["backspace", "backspace"],
+  ["delete", "delete"],
+  ["insert", "insert"],
+  ["clear", "clear"],
+  ["home", "home"],
+  ["end", "end"],
+  ["pageup", "pageUp"],
+  ["pagedown", "pageDown"],
+  ["up", "up"],
+  ["down", "down"],
+  ["left", "left"],
+  ["right", "right"],
+  ...Array.from({ length: 12 }, (_, index): [string, string] => [`f${index + 1}`, `f${index + 1}`]),
 ]);
+// Valid Pi keys, but not accepted as Recall shortcuts: terminals report Ctrl+symbol combos
+// inconsistently.
 const SYMBOL_KEYS = new Set<string>([
   "`",
   "-",
@@ -91,22 +88,6 @@ const DISPLAY_NAMES: Record<string, string> = {
   left: "Left",
   right: "Right",
 };
-const VALID_KEY_ID_SPECIAL_KEYS = new Set<string>([
-  "escape",
-  "enter",
-  "tab",
-  "space",
-  "backspace",
-  "delete",
-  "home",
-  "end",
-  "pageup",
-  "pagedown",
-  "up",
-  "down",
-  "left",
-  "right",
-]);
 
 // Mirrors RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS in Pi's extension runner, which is not
 // exported. Pi skips (with only a startup diagnostic) any extension shortcut bound to one of these.
@@ -212,7 +193,7 @@ export function validateShortcutKey(
 
   if (!hasShortcutModifier(normalized.split("+"))) {
     return {
-      error: "Recall shortcuts must include Ctrl and/or Alt so normal typing keeps working.",
+      error: "Recall shortcuts must include Ctrl, Alt or Super so normal typing keeps working.",
     };
   }
 
@@ -334,14 +315,9 @@ function normalizeBaseKey(value: string | undefined): string | undefined {
     return value;
   }
 
-  if (SPECIAL_KEYS.has(value)) {
-    if (value === "return") {
-      return "enter";
-    }
-    if (value === "esc") {
-      return "escape";
-    }
-    return value;
+  const specialKey = SPECIAL_KEYS.get(value);
+  if (specialKey) {
+    return specialKey;
   }
 
   if (SYMBOL_KEYS.has(value)) {
@@ -353,7 +329,7 @@ function normalizeBaseKey(value: string | undefined): string | undefined {
 
 function hasShortcutModifier(tokens: Iterable<string>): boolean {
   for (const token of tokens) {
-    if (token === "ctrl" || token === "alt") {
+    if (SHORTCUT_MODIFIERS.has(token)) {
       return true;
     }
   }
@@ -361,36 +337,14 @@ function hasShortcutModifier(tokens: Iterable<string>): boolean {
   return false;
 }
 
+/** Whether `value` is a normalized shortcut that Pi accepts as a KeyId and Recall allows. */
 function isValidKeyId(value: string): value is KeyId {
   const parts = parseShortcutParts(value);
-  if (!parts) {
+  if (!parts || normalizeShortcutKey(value) !== value || !hasShortcutModifier(parts.modifiers)) {
     return false;
   }
 
-  const modifierSet = new Set(parts.modifiers);
-  if (modifierSet.size !== parts.modifiers.length) {
-    return false;
-  }
-
-  for (const modifier of modifierSet) {
-    if (!MODIFIERS.has(modifier)) {
-      return false;
-    }
-  }
-
-  if (!hasShortcutModifier(modifierSet)) {
-    return false;
-  }
-
-  if (SYMBOL_KEYS.has(parts.key)) {
-    return false;
-  }
-
-  if (/^[a-z0-9]$/.test(parts.key)) {
-    return true;
-  }
-
-  return VALID_KEY_ID_SPECIAL_KEYS.has(parts.key);
+  return /^[a-z0-9]$/.test(parts.key) || SPECIAL_KEYS.has(parts.key);
 }
 
 function formatShortcutParts(parts: ShortcutParts): string {
