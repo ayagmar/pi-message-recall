@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   extractUserMessages,
   getAvailableScopes,
   loadMessagesForScope,
+  readSessionFile,
   resolveRecallScope,
 } from "../src/recall-history.js";
 import {
@@ -159,15 +163,15 @@ void test("loadMessagesForScope includes the current live session alongside pers
       },
     ],
     listAll: async () => [],
-    open: (path) => {
+    readSession: async (path) => {
       const session = sessions.get(path);
       if (!session) {
         throw new Error(`Unknown session: ${path}`);
       }
       return {
-        getEntries: () => session.entries as Parameters<typeof extractUserMessages>[0],
-        getSessionName: () => session.name,
-        getCwd: () => session.cwd,
+        entries: session.entries as Parameters<typeof extractUserMessages>[0],
+        ...(session.name ? { name: session.name } : {}),
+        cwd: session.cwd,
       };
     },
     findRepoRoot: () => undefined,
@@ -256,15 +260,14 @@ void test("repo scope filters sessions to the current git root", async () => {
   const dependencies: HistoryDependencies = {
     list: async () => [repoSession],
     listAll: async () => [repoSession, otherSession],
-    open: (path) => {
+    readSession: async (path) => {
       const session = sessions.get(path);
       if (!session) {
         throw new Error(`Unknown session: ${path}`);
       }
       return {
-        getEntries: () => session.entries as Parameters<typeof extractUserMessages>[0],
-        getSessionName: () => undefined,
-        getCwd: () => session.cwd,
+        entries: session.entries as Parameters<typeof extractUserMessages>[0],
+        cwd: session.cwd,
       };
     },
     findRepoRoot: () => "/work/repo",
@@ -310,4 +313,58 @@ void test("available scopes expose repo only when git metadata is available", ()
     "all",
   ]);
   assert.equal(resolveRecallScope("repo", ["project", "all"]), "project");
+});
+
+void test("readSessionFile reads an old-version session without rewriting it", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-history-"));
+  const sessionPath = join(root, "legacy.jsonl");
+  // A version 1 session: entries have no ids, so SessionManager.open() would migrate the file
+  // and write it back to disk.
+  const content = `${[
+    { type: "session", id: "legacy", timestamp: "2025-01-01T00:00:00.000Z", cwd: "/work/legacy" },
+    {
+      type: "message",
+      timestamp: "2025-01-01T00:00:01.000Z",
+      message: { role: "user", content: "Legacy prompt" },
+    },
+    { type: "session_info", timestamp: "2025-01-01T00:00:02.000Z", name: " Legacy work " },
+  ]
+    .map((entry) => JSON.stringify(entry))
+    .join("\n")}\n`;
+
+  try {
+    writeFileSync(sessionPath, content);
+    const before = statSync(sessionPath).mtimeMs;
+
+    const session = await readSessionFile(sessionPath);
+
+    assert.equal(session.cwd, "/work/legacy");
+    assert.equal(session.name, "Legacy work");
+    assert.ok(session.entries.every((entry) => entry.type !== "session"));
+    assert.deepEqual(
+      extractUserMessages(session.entries, {
+        sessionPath,
+        sessionCwd: "/work/legacy",
+        isCurrentSession: false,
+      }).map((message) => message.text),
+      ["Legacy prompt"]
+    );
+    assert.equal(readFileSync(sessionPath, "utf-8"), content);
+    assert.equal(statSync(sessionPath).mtimeMs, before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+void test("readSessionFile rejects files that are not Pi sessions", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-history-"));
+  const sessionPath = join(root, "empty.jsonl");
+
+  try {
+    writeFileSync(sessionPath, "");
+    await assert.rejects(readSessionFile(sessionPath), /not a pi session file/i);
+    assert.equal(readFileSync(sessionPath, "utf-8"), "");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

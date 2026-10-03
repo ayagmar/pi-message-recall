@@ -1,6 +1,11 @@
 import { execFileSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
+import {
+  migrateSessionEntries,
+  parseSessionEntries,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
 import { LOAD_YIELD_INTERVAL, MAX_PREVIEW_LENGTH } from "./recall-constants.js";
 import {
   type HistoryDependencies,
@@ -8,6 +13,7 @@ import {
   type RecallLoadProgress,
   type RecallMessage,
   type RecallScope,
+  type RecallSessionData,
   type RecallSessionInfo,
   type SessionEntryLike,
 } from "./recall-types.js";
@@ -35,7 +41,7 @@ const defaultHistoryDependencies: HistoryDependencies = {
       isCurrentSession: false,
     }));
   },
-  open: (path) => SessionManager.open(path),
+  readSession: readSessionFile,
   findRepoRoot: findGitRoot,
   yieldToUi: () => new Promise((resolveYield) => setTimeout(resolveYield, 0)),
 };
@@ -136,10 +142,10 @@ export async function loadMessagesForScope(
       let sessionCwd = request.currentCwd;
 
       if (!isCurrent) {
-        const openedSession = dependencies.open(sessionInfo.path);
-        sessionEntries = openedSession.getEntries();
-        sessionName = openedSession.getSessionName() ?? sessionInfo.name;
-        sessionCwd = openedSession.getCwd();
+        const session = await dependencies.readSession(sessionInfo.path, options?.signal);
+        sessionEntries = session.entries;
+        sessionName = session.name ?? sessionInfo.name;
+        sessionCwd = session.cwd ?? sessionInfo.cwd;
       }
 
       const messages = extractUserMessages(sessionEntries, {
@@ -168,6 +174,46 @@ export async function loadMessagesForScope(
   progress.loading = false;
   callbacks.onProgress({ ...progress });
   return { ...progress };
+}
+
+/**
+ * Reads a persisted session for recall without side effects. SessionManager.open() is not
+ * read-only: it rewrites older-version session files in place when it migrates them, and recall
+ * scans other projects' sessions, so the migration only happens in memory here.
+ */
+export async function readSessionFile(
+  path: string,
+  signal?: AbortSignal
+): Promise<RecallSessionData> {
+  const entries = parseSessionEntries(
+    await readFile(path, { encoding: "utf-8", ...(signal ? { signal } : {}) })
+  );
+  const header = entries.find((entry) => entry.type === "session");
+  if (!header) {
+    throw new Error(`Not a Pi session file: ${path}`);
+  }
+
+  migrateSessionEntries(entries);
+
+  let name: string | undefined;
+  const sessionEntries: SessionEntryLike[] = [];
+  for (const entry of entries) {
+    if (entry.type === "session") {
+      continue;
+    }
+
+    // Like SessionManager.getSessionName(): the latest session_info wins, and "" clears the name.
+    if (entry.type === "session_info") {
+      name = entry.name?.trim() || undefined;
+    }
+    sessionEntries.push(entry as SessionEntryLike);
+  }
+
+  return {
+    entries: sessionEntries,
+    ...(name ? { name } : {}),
+    ...(typeof header.cwd === "string" ? { cwd: header.cwd } : {}),
+  };
 }
 
 export function findGitRoot(cwd: string): string | undefined {

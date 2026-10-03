@@ -76,10 +76,10 @@ export interface RecallSessionInfo {
   isCurrentSession: boolean;
 }
 
-export interface RecallSessionLike {
-  getEntries(): SessionEntryLike[];
-  getSessionName(): string | undefined;
-  getCwd(): string;
+export interface RecallSessionData {
+  entries: SessionEntryLike[];
+  name?: string;
+  cwd?: string;
 }
 
 export interface SessionEntryLike {
@@ -105,7 +105,7 @@ export interface RecallHistoryRequest {
 export interface HistoryDependencies {
   list(cwd: string, sessionDir?: string): Promise<RecallSessionInfo[]>;
   listAll(): Promise<RecallSessionInfo[]>;
-  open(path: string): RecallSessionLike;
+  readSession(path: string, signal?: AbortSignal): Promise<RecallSessionData>;
   findRepoRoot(cwd: string): string | undefined;
   yieldToUi(): Promise<void>;
 }
