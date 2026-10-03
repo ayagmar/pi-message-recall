@@ -9,6 +9,7 @@ import {
   isWithinRoot,
   loadMessagesForScope,
   readSessionFile,
+  resolveCustomSessionDir,
   resolveRecallScope,
 } from "../src/recall-history.js";
 import {
@@ -395,7 +396,7 @@ void test("loadMessagesForScope passes the abort signal to session listing", asy
       seenSignals.push(signal);
       return [];
     },
-    listAll: async (signal) => {
+    listAll: async (_sessionDir, signal) => {
       seenSignals.push(signal);
       return [];
     },
@@ -418,4 +419,100 @@ void test("loadMessagesForScope passes the abort signal to session listing", asy
   );
 
   assert.deepEqual(seenSignals, [controller.signal, controller.signal]);
+});
+
+void test("resolveCustomSessionDir keeps the default per-cwd tree and passes custom dirs through", () => {
+  const agentDir = "/home/me/.pi/agent";
+  assert.equal(
+    resolveCustomSessionDir("/home/me/.pi/agent/sessions/--work-project--", agentDir),
+    undefined
+  );
+  assert.equal(resolveCustomSessionDir("", agentDir), undefined);
+  assert.equal(resolveCustomSessionDir(undefined, agentDir), undefined);
+  assert.equal(resolveCustomSessionDir("/data/pi-sessions", agentDir), "/data/pi-sessions");
+  assert.equal(
+    resolveCustomSessionDir("/data/pi-sessions/", agentDir),
+    "/data/pi-sessions",
+    "trailing separators are normalized"
+  );
+});
+
+void test("all and repo scopes list every project in a custom session directory", async () => {
+  const customDir = "/data/pi-sessions";
+  const sessionsInCustomDir: RecallSessionInfo[] = [
+    {
+      path: `${customDir}/current.jsonl`,
+      cwd: "/work/repo/app",
+      modified: new Date("2026-03-31T10:00:00.000Z"),
+      isCurrentSession: false,
+    },
+    {
+      path: `${customDir}/sibling.jsonl`,
+      cwd: "/work/repo/lib",
+      modified: new Date("2026-03-31T11:00:00.000Z"),
+      isCurrentSession: false,
+    },
+    {
+      path: `${customDir}/other.jsonl`,
+      cwd: "/work/other-project",
+      modified: new Date("2026-03-31T12:00:00.000Z"),
+      isCurrentSession: false,
+    },
+  ];
+  const listAllDirs: (string | undefined)[] = [];
+  const dependencies: HistoryDependencies = {
+    // Like SessionManager.list() with a custom dir: filtered to the current cwd.
+    list: async (cwd) => sessionsInCustomDir.filter((session) => session.cwd === cwd),
+    listAll: async (sessionDir) => {
+      listAllDirs.push(sessionDir);
+      return sessionDir === customDir ? sessionsInCustomDir : [];
+    },
+    readSession: async (path) => {
+      const session = sessionsInCustomDir.find((candidate) => candidate.path === path);
+      if (!session) {
+        throw new Error(`Unknown session: ${path}`);
+      }
+      return {
+        entries: [
+          {
+            type: "message",
+            id: "user-1",
+            timestamp: session.modified.toISOString(),
+            message: { role: "user", content: `prompt from ${session.cwd}` },
+          },
+        ],
+        cwd: session.cwd,
+      };
+    },
+    findRepoRoot: () => "/work/repo",
+    yieldToUi: async () => {},
+  };
+
+  const loadTexts = async (scope: "all" | "repo") => {
+    const texts: string[] = [];
+    await loadMessagesForScope(
+      {
+        scope,
+        currentCwd: "/work/repo/app",
+        currentSessionDir: customDir,
+        currentSessionEntries: [],
+        currentSessionFile: `${customDir}/current.jsonl`,
+      },
+      {
+        onBatch: (messages) => {
+          texts.push(...messages.map((message) => message.text));
+        },
+        onProgress: () => {},
+      },
+      { dependencies }
+    );
+    return texts.sort();
+  };
+
+  assert.deepEqual(await loadTexts("all"), [
+    "prompt from /work/other-project",
+    "prompt from /work/repo/lib",
+  ]);
+  assert.deepEqual(await loadTexts("repo"), ["prompt from /work/repo/lib"]);
+  assert.deepEqual(listAllDirs, [customDir, customDir]);
 });

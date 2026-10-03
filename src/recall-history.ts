@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { isAbsolute, type PlatformPath, relative, resolve, sep } from "node:path";
+import { dirname, isAbsolute, type PlatformPath, relative, resolve, sep } from "node:path";
 import {
+  getAgentDir,
   migrateSessionEntries,
   parseSessionEntries,
   SessionManager,
@@ -31,8 +32,11 @@ const defaultHistoryDependencies: HistoryDependencies = {
       isCurrentSession: false,
     }));
   },
-  listAll: async (signal) => {
-    const sessions = await SessionManager.listAll(undefined, signal);
+  listAll: async (sessionDir, signal) => {
+    const customSessionDir = resolveCustomSessionDir(sessionDir, getAgentDir());
+    const sessions = customSessionDir
+      ? await SessionManager.listAll(customSessionDir, undefined, signal)
+      : await SessionManager.listAll(undefined, signal);
     return sessions.map((session) => ({
       path: session.path,
       cwd: session.cwd,
@@ -45,6 +49,25 @@ const defaultHistoryDependencies: HistoryDependencies = {
   findRepoRoot: findGitRoot,
   yieldToUi: () => new Promise((resolveYield) => setTimeout(resolveYield, 0)),
 };
+
+/**
+ * The session directory to scan for the All and Repo scopes, or undefined for Pi's default tree.
+ * Pi keeps one subdirectory per cwd under `<agentDir>/sessions`; a custom session directory
+ * (`sessionDir` setting, `--session-dir`, PI_CODING_AGENT_SESSION_DIR) is flat and holds every
+ * project's sessions, so it has to be listed directly, like /resume does. An empty dir is an
+ * in-memory session, which uses the default tree.
+ */
+export function resolveCustomSessionDir(
+  sessionDir: string | undefined,
+  agentDir: string
+): string | undefined {
+  if (!sessionDir) {
+    return undefined;
+  }
+
+  const resolved = resolve(sessionDir);
+  return dirname(resolved) === resolve(agentDir, "sessions") ? undefined : resolved;
+}
 
 export function getAvailableScopes(
   cwd: string,
@@ -308,7 +331,7 @@ async function listSessionsForScope(
   }
 
   const [allSessions, projectSessions] = await Promise.all([
-    dependencies.listAll(signal),
+    dependencies.listAll(request.currentSessionDir, signal),
     dependencies.list(request.currentCwd, request.currentSessionDir, signal),
   ]);
   const combined = dedupeSessions([...allSessions, ...projectSessions]);
