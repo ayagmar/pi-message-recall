@@ -16,9 +16,13 @@ It is built for the common flow: open a picker, search your old prompts, drop on
 - configurable default scope, picker layout, and shortcut via `/recall settings`
 - progressive loading and paginated results for large histories
 
+## Requirements
+
+- Pi 1.0.1 or newer (`pi --version`). Older Pi releases are not supported.
+
 ## Install
 
-Install from npm
+Install from npm:
 
 ```bash
 pi install npm:pi-message-recall
@@ -36,7 +40,7 @@ Pin to a specific release tag:
 pi install git:github.com/ayagmar/pi-message-recall@vX.Y.Z
 ```
 
-Project-local install (writes to `.pi/settings.json`):
+Project-local install (writes to `.pi/settings.json`; Pi only loads project-local packages once the project is trusted):
 
 ```bash
 pi install -l npm:pi-message-recall
@@ -53,6 +57,8 @@ Then reload Pi:
 ```text
 /reload
 ```
+
+Update later with `pi update npm:pi-message-recall` (or `pi update --extensions`); a bare `pi update` only updates Pi itself.
 
 Or load the local repo during development:
 
