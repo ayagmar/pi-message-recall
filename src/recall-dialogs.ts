@@ -1347,7 +1347,7 @@ async function toggleShortcut(
 ): Promise<RecallSettings | undefined> {
   if (settings.shortcutEnabled) {
     const nextSettings = { ...settings, shortcutEnabled: false };
-    ctx.ui.notify("Recall shortcut disabled. Reload to apply the change.", "info");
+    ctx.ui.notify("Recall shortcut disabled.", "info");
     return nextSettings;
   }
 
@@ -1364,7 +1364,7 @@ async function toggleShortcut(
     shortcutEnabled: true,
     shortcutKey: captured,
   };
-  ctx.ui.notify("Recall shortcut enabled. Reload to apply the change.", "info");
+  ctx.ui.notify(`Recall shortcut enabled: ${formatShortcutKey(captured)}.`, "info");
   return nextSettings;
 }
 

@@ -291,3 +291,32 @@ void test("the prefilled search query keeps the cursor at its end", () => {
   empty.handleInput("a");
   assert.equal(empty.getValue(), "a");
 });
+
+void test("toggling the shortcut leaves the reload notice to the extension", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-dialogs-"));
+  const settingsPath = join(root, "settings.json");
+  const notifications: string[] = [];
+  const ctx = {
+    mode: "rpc",
+    hasUI: true,
+    ui: {
+      select: async () => "Shortcut · Enabled",
+      notify: (message: string) => {
+        notifications.push(message);
+      },
+    },
+  } as unknown as ExtensionContext;
+
+  try {
+    const result = await openRecallSettingsFlow(ctx, {
+      settings: createRecallSettings(),
+      settingsPath,
+    });
+
+    assert.equal(result?.settings.shortcutEnabled, false);
+    assert.equal(result?.reloadRequired, true);
+    assert.deepEqual(notifications, ["Recall shortcut disabled."]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
