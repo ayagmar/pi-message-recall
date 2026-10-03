@@ -386,3 +386,36 @@ void test("isWithinRoot handles Windows paths", () => {
   assert.equal(isWithinRoot("C:/Users/me/repo", "C:\\Users\\me\\repo-other", win32), false);
   assert.equal(isWithinRoot("C:/Users/me/repo", "D:\\Users\\me\\repo", win32), false);
 });
+
+void test("loadMessagesForScope passes the abort signal to session listing", async () => {
+  const controller = new AbortController();
+  const seenSignals: (AbortSignal | undefined)[] = [];
+  const dependencies: HistoryDependencies = {
+    list: async (_cwd, _sessionDir, signal) => {
+      seenSignals.push(signal);
+      return [];
+    },
+    listAll: async (signal) => {
+      seenSignals.push(signal);
+      return [];
+    },
+    readSession: async () => {
+      throw new Error("no sessions to read");
+    },
+    findRepoRoot: () => undefined,
+    yieldToUi: async () => {},
+  };
+
+  await loadMessagesForScope(
+    {
+      scope: "all",
+      currentCwd: "/work/project",
+      currentSessionDir: "/tmp/sessions",
+      currentSessionEntries: [],
+    },
+    { onBatch: () => {}, onProgress: () => {} },
+    { dependencies, signal: controller.signal }
+  );
+
+  assert.deepEqual(seenSignals, [controller.signal, controller.signal]);
+});

@@ -103,8 +103,8 @@ export interface RecallHistoryRequest {
 }
 
 export interface HistoryDependencies {
-  list(cwd: string, sessionDir?: string): Promise<RecallSessionInfo[]>;
-  listAll(): Promise<RecallSessionInfo[]>;
+  list(cwd: string, sessionDir?: string, signal?: AbortSignal): Promise<RecallSessionInfo[]>;
+  listAll(signal?: AbortSignal): Promise<RecallSessionInfo[]>;
   readSession(path: string, signal?: AbortSignal): Promise<RecallSessionData>;
   findRepoRoot(cwd: string): string | undefined;
   yieldToUi(): Promise<void>;

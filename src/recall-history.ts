@@ -21,8 +21,8 @@ import {
 const CURRENT_SESSION_SENTINEL = "__current_session__";
 
 const defaultHistoryDependencies: HistoryDependencies = {
-  list: async (cwd, sessionDir) => {
-    const sessions = await SessionManager.list(cwd, sessionDir);
+  list: async (cwd, sessionDir, signal) => {
+    const sessions = await SessionManager.list(cwd, sessionDir, undefined, signal);
     return sessions.map((session) => ({
       path: session.path,
       cwd: session.cwd,
@@ -31,8 +31,8 @@ const defaultHistoryDependencies: HistoryDependencies = {
       isCurrentSession: false,
     }));
   },
-  listAll: async () => {
-    const sessions = await SessionManager.listAll();
+  listAll: async (signal) => {
+    const sessions = await SessionManager.listAll(undefined, signal);
     return sessions.map((session) => ({
       path: session.path,
       cwd: session.cwd,
@@ -117,7 +117,7 @@ export async function loadMessagesForScope(
   }
 ): Promise<RecallLoadProgress> {
   const dependencies = options?.dependencies ?? defaultHistoryDependencies;
-  const listed = await listSessionsForScope(request, dependencies);
+  const listed = await listSessionsForScope(request, dependencies, options?.signal);
   const progress: RecallLoadProgress = {
     scope: request.scope,
     totalSessions: listed.sessions.length,
@@ -299,16 +299,17 @@ function normalizeWhitespace(text: string): string {
 
 async function listSessionsForScope(
   request: RecallHistoryRequest,
-  dependencies: HistoryDependencies
+  dependencies: HistoryDependencies,
+  signal: AbortSignal | undefined
 ): Promise<{ sessions: RecallSessionInfo[]; unavailableReason?: string }> {
   if (request.scope === "project") {
-    const sessions = await dependencies.list(request.currentCwd, request.currentSessionDir);
+    const sessions = await dependencies.list(request.currentCwd, request.currentSessionDir, signal);
     return { sessions: attachCurrentSession(sessions, request) };
   }
 
   const [allSessions, projectSessions] = await Promise.all([
-    dependencies.listAll(),
-    dependencies.list(request.currentCwd, request.currentSessionDir),
+    dependencies.listAll(signal),
+    dependencies.list(request.currentCwd, request.currentSessionDir, signal),
   ]);
   const combined = dedupeSessions([...allSessions, ...projectSessions]);
 
