@@ -143,6 +143,8 @@ Settings are stored here:
 ~/.pi/agent/extensions/pi-message-recall/settings.json
 ```
 
+(`~/.pi/agent` is Pi's agent directory; if you set `PI_CODING_AGENT_DIR`, the file lives under that directory instead.)
+
 Today the settings are:
 
 - default scope

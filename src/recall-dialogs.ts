@@ -58,6 +58,9 @@ export async function openRecallPicker(
           layoutPreference: options.settings.pickerLayout,
           currentCwd: ctx.cwd,
           currentSessionDir: ctx.sessionManager.getSessionDir(),
+          // All branches on purpose (not getBranch()): prompts from abandoned branches are still
+          // text the user typed. Only role "user" message entries are read, so system messages and
+          // usage/context_edit entries are ignored.
           currentSessionEntries: ctx.sessionManager.getEntries() as Parameters<
             typeof loadMessagesForScope
           >[0]["currentSessionEntries"],

@@ -64,6 +64,49 @@ void test("extractUserMessages keeps text content and ignores image-only entries
   assert.match(messages[1]?.preview ?? "", /key hints visible/i);
 });
 
+void test("extractUserMessages ignores pi 1.0 system messages and non-message entries", () => {
+  const messages = extractUserMessages(
+    [
+      { type: "session", id: "header" },
+      {
+        type: "message",
+        id: "system-1",
+        timestamp: "2026-10-03T12:00:00.000Z",
+        message: { role: "system", content: [{ type: "text", text: "You are pi" }] },
+      },
+      { type: "usage", id: "usage-1", timestamp: "2026-10-03T12:00:01.000Z" },
+      {
+        type: "message",
+        id: "user-1",
+        timestamp: "2026-10-03T12:00:02.000Z",
+        message: { role: "user", content: "First real prompt" },
+      },
+      {
+        type: "context_edit",
+        id: "edit-1",
+        timestamp: "2026-10-03T12:00:03.000Z",
+        message: { role: "user", content: "not a message entry" },
+      },
+      {
+        type: "message",
+        id: "assistant-1",
+        timestamp: "2026-10-03T12:00:04.000Z",
+        message: { role: "assistant", content: [{ type: "text", text: "Done" }] },
+      },
+    ],
+    {
+      sessionPath: "/sessions/pi-1.jsonl",
+      sessionCwd: "/work/project",
+      isCurrentSession: false,
+    }
+  );
+
+  assert.deepEqual(
+    messages.map((message) => message.text),
+    ["First real prompt"]
+  );
+});
+
 void test("extractUserMessages falls back to the session timestamp when entries do not have one", () => {
   const messages = extractUserMessages(
     [
