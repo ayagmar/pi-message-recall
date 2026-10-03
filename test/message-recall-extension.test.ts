@@ -8,9 +8,16 @@ import { EXTENSION_COMMAND } from "../src/recall-constants.js";
 import { saveRecallSettings } from "../src/recall-settings.js";
 import { createCommandContext, createHarness, createShortcutContext } from "./test-harness.js";
 
+// Never read the real ~/.pi agent settings: a customised shortcut there would break these tests.
+const missingSettingsPath = join(
+  tmpdir(),
+  `pi-message-recall-missing-${process.pid}-${Date.now()}`,
+  "settings.json"
+);
+
 void test("extension registers the /recall command and default Alt+R shortcut", () => {
   const harness = createHarness();
-  createMessageRecallExtension(harness.pi);
+  createMessageRecallExtension(harness.pi, { settingsPath: missingSettingsPath });
 
   assert.ok(harness.commands.has(EXTENSION_COMMAND));
   assert.ok(harness.shortcuts.has("alt+r"));
@@ -45,6 +52,7 @@ void test("extension skips shortcut registration when the saved key is invalid",
 void test("/recall restores the previous draft when the picker is cancelled", async () => {
   const harness = createHarness();
   createMessageRecallExtension(harness.pi, {
+    settingsPath: missingSettingsPath,
     openPicker: async (_ctx, options) => {
       assert.equal(options.initialQuery, "existing draft");
       assert.equal(options.previousDraft, "existing draft");
@@ -66,6 +74,7 @@ void test("/recall restores the previous draft when the picker is cancelled", as
 void test("/recall fills the editor with the selected message without auto-sending", async () => {
   const harness = createHarness();
   createMessageRecallExtension(harness.pi, {
+    settingsPath: missingSettingsPath,
     openPicker: async (_ctx, options) => {
       assert.equal(options.initialQuery, "find this");
       assert.equal(options.previousDraft, "draft");
@@ -95,6 +104,7 @@ void test("/recall fills the editor with the selected message without auto-sendi
 void test("/recall restores the previous draft if the picker throws", async () => {
   const harness = createHarness();
   createMessageRecallExtension(harness.pi, {
+    settingsPath: missingSettingsPath,
     openPicker: async (_ctx, options) => {
       assert.equal(options.previousDraft, "draft before failure");
       throw new Error("picker crashed");
@@ -115,6 +125,7 @@ void test("/recall restores the previous draft if the picker throws", async () =
 void test("the shortcut opens recall only when Pi is idle", async () => {
   const harness = createHarness();
   createMessageRecallExtension(harness.pi, {
+    settingsPath: missingSettingsPath,
     openPicker: async () => undefined,
   });
 
@@ -130,6 +141,7 @@ void test("/recall explains that the picker needs the TUI in RPC mode", async ()
   const harness = createHarness();
   let pickerOpened = false;
   createMessageRecallExtension(harness.pi, {
+    settingsPath: missingSettingsPath,
     openPicker: async () => {
       pickerOpened = true;
       return undefined;
@@ -152,6 +164,7 @@ void test("the shortcut does nothing outside the TUI", async () => {
   const harness = createHarness();
   let pickerOpened = false;
   createMessageRecallExtension(harness.pi, {
+    settingsPath: missingSettingsPath,
     openPicker: async () => {
       pickerOpened = true;
       return undefined;
