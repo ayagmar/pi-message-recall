@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { RESULT_PAGE_SIZE } from "../src/recall-constants.js";
 import {
   adjustRecallPickerLayoutForPreview,
+  captureShortcutKey,
   resolveRecallPickerLayout,
   resolveRecallPickerWindow,
   resolveRetainedSelectionIndex,
@@ -123,4 +125,40 @@ void test("resolveRetainedSelectionIndex falls back to prompt text when dedupe r
     resolveRetainedSelectionIndex(results, "older-duplicate", "Keep the key hints visible"),
     0
   );
+});
+
+void test("captureShortcutKey asks for the key as text outside the TUI", async () => {
+  const notifications: string[] = [];
+  const inputs: string[] = [];
+  let customCalls = 0;
+  const createCtx = (answer: string | undefined) =>
+    ({
+      mode: "rpc",
+      hasUI: true,
+      ui: {
+        input: async (_title: string, placeholder?: string) => {
+          inputs.push(placeholder ?? "");
+          return answer;
+        },
+        custom: async () => {
+          customCalls += 1;
+          return undefined;
+        },
+        notify: (message: string) => {
+          notifications.push(message);
+        },
+      },
+    }) as unknown as ExtensionContext;
+
+  assert.equal(
+    await captureShortcutKey(createCtx(" Ctrl+Alt+R "), { currentValue: "alt+r" }),
+    "ctrl+alt+r"
+  );
+  assert.deepEqual(inputs, ["alt+r"]);
+
+  assert.equal(await captureShortcutKey(createCtx("r")), undefined);
+  assert.match(notifications.at(-1) ?? "", /must include ctrl and\/or alt/i);
+
+  assert.equal(await captureShortcutKey(createCtx(undefined)), undefined);
+  assert.equal(customCalls, 0);
 });

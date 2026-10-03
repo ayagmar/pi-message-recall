@@ -44,7 +44,7 @@ export function createMessageRecallExtension(
     pi.registerShortcut(startupShortcutStatus.key, {
       description: "Recall a previous user message into the editor",
       handler: async (ctx) => {
-        if (!ctx.hasUI) {
+        if (ctx.mode !== "tui") {
           return;
         }
 
@@ -63,7 +63,7 @@ export function createMessageRecallExtension(
   }
 
   pi.on("session_start", (_event, ctx) => {
-    if (notifiedShortcutIssue || !ctx.hasUI || startupShortcutStatus.state !== "skipped") {
+    if (notifiedShortcutIssue || ctx.mode !== "tui" || startupShortcutStatus.state !== "skipped") {
       return;
     }
 
@@ -107,8 +107,12 @@ export function createMessageRecallExtension(
           }
 
           case "picker": {
-            if (!ctx.hasUI) {
-              ctx.ui.notify(`/${EXTENSION_COMMAND} requires interactive mode.`, "error");
+            // The picker is a custom TUI overlay; ctx.ui.custom() is a no-op in RPC mode.
+            if (ctx.mode !== "tui") {
+              ctx.ui.notify(
+                `/${EXTENSION_COMMAND} requires the interactive terminal UI. Use /${EXTENSION_COMMAND} status or /${EXTENSION_COMMAND} settings instead.`,
+                "error"
+              );
               return;
             }
 

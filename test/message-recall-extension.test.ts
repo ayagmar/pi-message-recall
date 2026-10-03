@@ -125,3 +125,79 @@ void test("the shortcut opens recall only when Pi is idle", async () => {
   await shortcut?.handler(busyCtx);
   assert.match(busyCtx.notifications[0] ?? "", /wait for pi to finish/i);
 });
+
+void test("/recall explains that the picker needs the TUI in RPC mode", async () => {
+  const harness = createHarness();
+  let pickerOpened = false;
+  createMessageRecallExtension(harness.pi, {
+    openPicker: async () => {
+      pickerOpened = true;
+      return undefined;
+    },
+  });
+
+  const command = harness.commands.get(EXTENSION_COMMAND);
+  assert.ok(command);
+
+  const ctx = createCommandContext({ mode: "rpc", editorText: "draft" });
+  await command?.handler("", ctx);
+
+  assert.equal(pickerOpened, false);
+  assert.equal(ctx.waitForIdleCalls, 0);
+  assert.deepEqual(ctx.setEditorTextCalls, []);
+  assert.match(ctx.notifications.at(-1) ?? "", /requires the interactive terminal UI/i);
+});
+
+void test("the shortcut does nothing outside the TUI", async () => {
+  const harness = createHarness();
+  let pickerOpened = false;
+  createMessageRecallExtension(harness.pi, {
+    openPicker: async () => {
+      pickerOpened = true;
+      return undefined;
+    },
+  });
+
+  const shortcut = harness.shortcuts.get("alt+r");
+  assert.ok(shortcut);
+
+  const ctx = createShortcutContext({ mode: "rpc" });
+  await shortcut?.handler(ctx);
+
+  assert.equal(pickerOpened, false);
+  assert.deepEqual(ctx.notifications, []);
+});
+
+void test("the skipped-shortcut warning is shown once, and only in the TUI", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-extension-"));
+  const settingsPath = join(root, "settings.json");
+
+  try {
+    saveRecallSettings(
+      {
+        defaultScope: "project",
+        pickerLayout: "balanced",
+        shortcutEnabled: true,
+        shortcutKey: "shift+tab",
+      },
+      settingsPath
+    );
+
+    const harness = createHarness();
+    createMessageRecallExtension(harness.pi, { settingsPath });
+    const [sessionStart] = harness.eventHandlers.get("session_start") ?? [];
+    assert.ok(sessionStart);
+
+    const rpcCtx = createShortcutContext({ mode: "rpc" });
+    await sessionStart({ type: "session_start", reason: "startup" }, rpcCtx);
+    assert.deepEqual(rpcCtx.notifications, []);
+
+    const tuiCtx = createShortcutContext({ mode: "tui" });
+    await sessionStart({ type: "session_start", reason: "startup" }, tuiCtx);
+    await sessionStart({ type: "session_start", reason: "startup" }, tuiCtx);
+    assert.equal(tuiCtx.notifications.length, 1);
+    assert.match(tuiCtx.notifications[0] ?? "", /shortcut .* was not installed/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

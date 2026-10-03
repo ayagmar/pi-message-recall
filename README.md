@@ -170,6 +170,7 @@ The picker is intentionally conservative for large histories:
 ## Limitations
 
 - recall is **text-only** in v1
+- the picker and the shortcut need Pi's interactive terminal UI; in RPC clients `/recall` explains this, and `/recall settings` asks for the shortcut key as text
 - old images and attachments are not recalled
 - cancelling restores the previous **text** draft only; Pi does not expose public APIs for restoring attachments in the editor
 - all-scope recall depends on Pi's public session listing APIs, so custom session storage setups may only be partially visible outside the current project bucket

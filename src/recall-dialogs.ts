@@ -1157,6 +1157,10 @@ export async function captureShortcutKey(
   ctx: ExtensionContext,
   options?: { currentValue?: string }
 ): Promise<string | undefined> {
+  if (ctx.mode !== "tui") {
+    return promptShortcutKey(ctx, options);
+  }
+
   return ctx.ui.custom<string | undefined>(
     (tui, theme, _keybindings, done) => {
       return new ShortcutCaptureDialog(theme, {
@@ -1174,6 +1178,29 @@ export async function captureShortcutKey(
       },
     }
   );
+}
+
+// ctx.ui.custom() resolves to undefined outside the TUI (e.g. RPC clients), so ask for the key as
+// text there instead of silently treating the capture as cancelled.
+async function promptShortcutKey(
+  ctx: ExtensionContext,
+  options?: { currentValue?: string }
+): Promise<string | undefined> {
+  const typed = await ctx.ui.input(
+    "Message Recall shortcut (e.g. alt+r, ctrl+alt+r)",
+    options?.currentValue ?? DEFAULT_SHORTCUT_KEY
+  );
+  if (!typed?.trim()) {
+    return undefined;
+  }
+
+  const validation = validateShortcutKey(typed);
+  if (!validation.normalized) {
+    ctx.ui.notify(validation.error ?? "That shortcut is not valid.", "error");
+    return undefined;
+  }
+
+  return validation.normalized;
 }
 
 class ShortcutCaptureDialog implements Component {

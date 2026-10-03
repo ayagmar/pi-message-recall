@@ -4,6 +4,8 @@ import {
   type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+type ExtensionMode = ExtensionContext["mode"];
+
 interface RegisteredCommand {
   handler: (args: string, ctx: ExtensionCommandContext) => Promise<void>;
 }
@@ -43,6 +45,7 @@ export function createHarness(): Harness {
 
 export function createCommandContext(options?: {
   hasUI?: boolean;
+  mode?: ExtensionMode;
   editorText?: string;
 }): ExtensionCommandContext & {
   notifications: string[];
@@ -58,6 +61,8 @@ export function createCommandContext(options?: {
 
   return {
     hasUI: options?.hasUI ?? true,
+    mode: options?.mode ?? "tui",
+    isProjectTrusted: () => true,
     cwd: "/work/project",
     notifications,
     setEditorTextCalls,
@@ -93,6 +98,7 @@ export function createCommandContext(options?: {
 
 export function createShortcutContext(options?: {
   hasUI?: boolean;
+  mode?: ExtensionMode;
   editorText?: string;
   idle?: boolean;
 }) {
@@ -102,6 +108,8 @@ export function createShortcutContext(options?: {
 
   return {
     hasUI: options?.hasUI ?? true,
+    mode: options?.mode ?? "tui",
+    isProjectTrusted: () => true,
     cwd: "/work/project",
     notifications,
     setEditorTextCalls,
