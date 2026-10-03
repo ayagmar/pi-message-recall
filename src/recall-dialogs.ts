@@ -449,8 +449,21 @@ export function resolveRetainedSelectionIndex(
   return -1;
 }
 
+/**
+ * Creates the picker's search field with the cursor after `initialQuery`, so typing refines the
+ * prefilled query instead of being inserted in front of it (Input.setValue() keeps the cursor at 0).
+ */
+export function createSearchInput(initialQuery: string): Input {
+  const input = new Input();
+  if (initialQuery) {
+    // A bracketed paste inserts at the cursor and moves past the text, whatever the keybindings.
+    input.handleInput(`\x1b[200~${initialQuery}\x1b[201~`);
+  }
+  return input;
+}
+
 class RecallPickerDialog implements Component, Focusable {
-  private readonly searchInput = new Input();
+  private readonly searchInput: Input;
   private readonly searchHint =
     'Search with words, "quoted phrases", or re:<pattern>. Empty query shows recent unique prompts.';
 
@@ -494,7 +507,7 @@ class RecallPickerDialog implements Component, Focusable {
     }
   ) {
     this.scope = options.initialScope;
-    this.searchInput.setValue(options.initialQuery);
+    this.searchInput = createSearchInput(options.initialQuery);
     this.searchInput.focused = true;
     this.state = {
       progress: {

@@ -9,6 +9,7 @@ import {
   adjustRecallPickerLayoutForPreview,
   captureShortcutKey,
   compactPath,
+  createSearchInput,
   formatRelativeTime,
   openRecallSettingsFlow,
   resolveRecallPickerLayout,
@@ -279,4 +280,14 @@ void test("formatRelativeTime shows older prompts with their local calendar date
       process.env.TZ = previousTz;
     }
   }
+});
+
+void test("the prefilled search query keeps the cursor at its end", () => {
+  const input = createSearchInput("loading spinner");
+  input.handleInput("s");
+  assert.equal(input.getValue(), "loading spinners");
+
+  const empty = createSearchInput("");
+  empty.handleInput("a");
+  assert.equal(empty.getValue(), "a");
 });
