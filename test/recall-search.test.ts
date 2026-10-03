@@ -205,3 +205,20 @@ void test("explicit searches return every loaded match", () => {
   assert.equal(result.matches.length, 250);
   assert.equal(result.matches.at(-1)?.id, "match-249");
 });
+
+void test("fuzzy fallback handles non-BMP characters in the query", () => {
+  const result = searchRecallMessages(
+    [
+      {
+        ...messages[0],
+        id: "emoji",
+        text: "ship it 🚀 tonight",
+        preview: "ship it 🚀 tonight",
+        normalizedText: "ship it 🚀 tonight",
+      } as RecallMessage,
+    ],
+    "s🚀t"
+  );
+
+  assert.equal(result.matches.length, 1);
+});

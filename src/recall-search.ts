@@ -1,3 +1,4 @@
+import { fuzzyMatch } from "@earendil-works/pi-tui";
 import { type RecallMessage, type RecallSearchResult } from "./recall-types.js";
 
 type SearchTerm = {
@@ -102,7 +103,8 @@ function classifyTextMatch(
       continue;
     }
 
-    if (!term.allowFuzzy || !isSubsequence(normalizedText, term.text)) {
+    // Fuzzy fallback: the term's characters appear in order (pi-tui's subsequence matcher).
+    if (!term.allowFuzzy || !fuzzyMatch(term.text, normalizedText).matches) {
       return undefined;
     }
 
@@ -110,21 +112,6 @@ function classifyTextMatch(
   }
 
   return isExact ? "exact" : "fuzzy";
-}
-
-function isSubsequence(text: string, query: string): boolean {
-  let queryIndex = 0;
-
-  for (const char of text) {
-    if (char === query[queryIndex]) {
-      queryIndex += 1;
-      if (queryIndex === query.length) {
-        return true;
-      }
-    }
-  }
-
-  return queryIndex === query.length;
 }
 
 function parseQueryTerms(query: string): SearchTerm[] {
