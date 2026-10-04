@@ -165,6 +165,17 @@ void test("quoted phrases stay exact instead of falling back to fuzzy matches", 
   assert.deepEqual(result.matches, []);
 });
 
+void test("an unclosed quote searches for the phrase typed so far", () => {
+  const result = searchRecallMessages(messages, 'picker "key hin');
+
+  assert.equal(result.mode, "text");
+  assert.deepEqual(
+    result.matches.map((message) => message.id),
+    ["middle"]
+  );
+  assert.equal(searchRecallMessages(messages, '"').mode, "recent");
+});
+
 void test("regex queries match against original message text", () => {
   const result = searchRecallMessages(messages, "re:/loading.*regression/g");
 

@@ -116,7 +116,9 @@ function classifyTextMatch(
 
 function parseQueryTerms(query: string): SearchTerm[] {
   const terms: SearchTerm[] = [];
-  const pattern = /"([^"]+)"|(\S+)/g;
+  // An unclosed quote runs to the end of the query, so a phrase still being typed narrows the
+  // results instead of searching for a literal `"`.
+  const pattern = /"([^"]*)"?|(\S+)/g;
 
   for (const match of query.matchAll(pattern)) {
     const phrase = match[1] ?? match[2];
