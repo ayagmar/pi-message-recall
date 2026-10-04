@@ -326,11 +326,16 @@ function resolveEntryTimestamp(
 
 function buildPreview(text: string): string {
   const normalized = normalizeWhitespace(text);
-  if (normalized.length <= MAX_PREVIEW_LENGTH) {
+  // Count code points, not UTF-16 units, so the cut never splits an emoji's surrogate pair.
+  const codePoints = Array.from(normalized);
+  if (codePoints.length <= MAX_PREVIEW_LENGTH) {
     return normalized;
   }
 
-  return `${normalized.slice(0, MAX_PREVIEW_LENGTH - 1).trimEnd()}…`;
+  return `${codePoints
+    .slice(0, MAX_PREVIEW_LENGTH - 1)
+    .join("")
+    .trimEnd()}…`;
 }
 
 function normalizeWhitespace(text: string): string {

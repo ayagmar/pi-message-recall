@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join, posix, resolve, win32 } from "node:path";
 import test from "node:test";
 import { type ExecOptions } from "@earendil-works/pi-coding-agent";
+import { MAX_PREVIEW_LENGTH } from "../src/recall-constants.js";
 import {
   type ExecCommand,
   extractUserMessages,
@@ -21,6 +22,16 @@ import {
   type RecallMessage,
   type RecallSessionInfo,
 } from "../src/recall-types.js";
+
+void test("extractUserMessages shortens long previews without splitting emoji", () => {
+  const text = `${"a".repeat(MAX_PREVIEW_LENGTH - 2)}😀😀 tail`;
+  const [message] = extractUserMessages(
+    [{ type: "message", id: "long", message: { role: "user", content: text } }],
+    { sessionPath: "/s.jsonl", sessionCwd: "/work", isCurrentSession: false }
+  );
+
+  assert.equal(message?.preview, `${"a".repeat(MAX_PREVIEW_LENGTH - 2)}😀…`);
+});
 
 void test("extractUserMessages keeps text content and ignores image-only entries", () => {
   const messages = extractUserMessages(
