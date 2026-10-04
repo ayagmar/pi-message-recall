@@ -957,7 +957,10 @@ class RecallPickerDialog implements Component, Focusable {
       lines.push(
         this.theme.fg(
           "dim",
-          truncateToWidth("Switch scope with Tab or try another directory.", width)
+          truncateToWidth(
+            `Switch scope with ${keyText("tui.input.tab")} or try another directory.`,
+            width
+          )
         )
       );
       return lines;
@@ -1000,7 +1003,10 @@ class RecallPickerDialog implements Component, Focusable {
       lines.push(
         this.theme.fg(
           "dim",
-          truncateToWidth("Try Tab for a wider scope once you have more history.", width)
+          truncateToWidth(
+            `Try ${keyText("tui.input.tab")} for a wider scope once you have more history.`,
+            width
+          )
         )
       );
       return lines;
@@ -1029,7 +1035,7 @@ class RecallPickerDialog implements Component, Focusable {
           "dim",
           truncateToWidth(
             this.scope !== "all"
-              ? "Try shorter terms, quotes, regex, or press Tab to widen the scope."
+              ? `Try shorter terms, quotes, regex, or press ${keyText("tui.input.tab")} to widen the scope.`
               : "Try shorter terms, quoted phrases, or regex with re:<pattern>.",
             width
           )

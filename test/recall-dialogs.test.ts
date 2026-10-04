@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { type ExtensionContext, initTheme } from "@earendil-works/pi-coding-agent";
+import { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { RESULT_PAGE_SIZE } from "../src/recall-constants.js";
 import {
   adjustRecallPickerLayoutForPreview,
@@ -11,6 +12,7 @@ import {
   compactPath,
   createSearchInput,
   formatRelativeTime,
+  openRecallPicker,
   openRecallSettingsFlow,
   resolveRecallPickerLayout,
   resolveRecallPickerWindow,
@@ -317,6 +319,76 @@ void test("toggling the shortcut leaves the reload notice to the extension", asy
     assert.equal(result?.reloadRequired, true);
     assert.deepEqual(notifications, ["Recall shortcut disabled."]);
   } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+void test("the picker's empty state names the configured scope key", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-picker-"));
+  initTheme("dark");
+  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, { "tui.input.tab": "ctrl+t" });
+  setKeybindings(keybindings);
+  let dialog: { render(width: number): string[]; handleInput(data: string): void } | undefined;
+  const ctx = {
+    mode: "tui",
+    hasUI: true,
+    cwd: root,
+    sessionManager: {
+      getSessionDir: () => root,
+      getEntries: () => [],
+      getSessionFile: () => undefined,
+      getSessionName: () => undefined,
+    },
+    ui: {
+      getEditorText: () => "",
+      setEditorText: () => undefined,
+      custom: (
+        factory: (
+          tui: unknown,
+          theme: unknown,
+          keybindings: unknown,
+          done: (value: unknown) => void
+        ) => NonNullable<typeof dialog>,
+        _options: unknown
+      ) =>
+        new Promise((resolve) => {
+          dialog = factory(
+            {
+              requestRender: () => undefined,
+              terminal: { rows: 40, columns: 120 },
+            },
+            {
+              fg: (_c: string, t: string) => t,
+              bg: (_c: string, t: string) => t,
+              bold: (t: string) => t,
+            },
+            keybindings,
+            resolve
+          );
+        }),
+    },
+  } as unknown as ExtensionContext;
+
+  try {
+    const picker = openRecallPicker(ctx, {
+      initialQuery: "",
+      previousDraft: "",
+      settings: createRecallSettings(),
+      findRepoRoot: async () => undefined,
+    });
+    let output = "";
+    for (let attempt = 0; attempt < 100 && !output.includes("wider scope"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      output = dialog?.render(120).join("\n") ?? "";
+    }
+
+    assert.match(output, /Try ctrl\+t for a wider scope/);
+    assert.doesNotMatch(output, /\bTab\b/);
+
+    dialog?.handleInput("\x1b");
+    assert.equal(await picker, undefined);
+  } finally {
+    setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS));
     rmSync(root, { recursive: true, force: true });
   }
 });
