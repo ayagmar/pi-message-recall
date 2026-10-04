@@ -8,6 +8,7 @@
     "message-recall",
     "history"
   ],
+  "license": "MIT",
   "author": "ayagmar",
   "repository": {
     "type": "git",
@@ -22,45 +23,44 @@
   "files": [
     "src/",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
-  "scripts": {
-    "lint": "biome lint . --error-on-warnings",
-    "lint:fix": "biome check --write .",
-    "format": "biome format --write .",
-    "format:check": "biome format .",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "smoke-test": "node --import=tsx ./scripts/smoke-test.mjs",
-    "test": "node --import=tsx --test ./test/*.test.ts",
-    "check": "tsc --noEmit -p tsconfig.json && node --import=tsx ./scripts/smoke-test.mjs && node --import=tsx --test ./test/*.test.ts && pnpm run lint && pnpm run format:check",
-    "release": "release-it",
-    "release:patch": "release-it patch",
-    "release:minor": "release-it minor",
-    "release:major": "release-it major",
-    "release:first": "release-it --first-release",
-    "release:ci": "node --import=tsx ./scripts/release-ci.ts"
-  },
   "pi": {
     "extensions": [
       "./src/index.ts"
     ]
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "biome lint --error-on-warnings .",
+    "lint:fix": "biome check --write .",
+    "format": "biome format --write .",
+    "format:check": "biome format .",
+    "test": "node --import=tsx --test ./test/*.test.ts",
+    "smoke-test": "node --import=tsx ./scripts/smoke-test.mjs",
+    "check": "pnpm run typecheck && pnpm run lint && pnpm run format:check && pnpm run test && pnpm run smoke-test",
+    "release:dry": "release-it --ci --dry-run"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@earendil-works/pi-tui": "*"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.4.9",
-    "@earendil-works/pi-coding-agent": "^0.80.0",
-    "@earendil-works/pi-tui": "^0.80.0",
-    "@release-it/conventional-changelog": "^10.0.6",
-    "@types/node": "^22.19.10",
-    "release-it": "^19.2.4",
+    "@biomejs/biome": "^2.5.15",
+    "@earendil-works/pi-coding-agent": "^1.0.1",
+    "@earendil-works/pi-tui": "^1.0.1",
+    "@release-it/conventional-changelog": "^12.0.2",
+    "@types/node": "^24.19.1",
+    "release-it": "^21.1.0",
     "tsx": "^4.21.0",
     "typescript": "^5.9.3"
   },
-  "license": "MIT",
   "engines": {
-    "node": ">=22"
+    "node": ">=22.19.0"
+  },
+  "packageManager": "pnpm@12.8.1",
+  "publishConfig": {
+    "access": "public"
   }
 }

@@ -49,6 +49,13 @@ export type ShortcutStatus =
       state: "skipped";
       label: string;
       detail: string;
+    }
+  | {
+      /** Registered, but bound to a key that Pi reserves for one of its own actions. */
+      state: "conflict";
+      key: KeyId;
+      label: string;
+      detail: string;
     };
 
 export interface RecallLoadProgress {
@@ -69,10 +76,10 @@ export interface RecallSessionInfo {
   isCurrentSession: boolean;
 }
 
-export interface RecallSessionLike {
-  getEntries(): SessionEntryLike[];
-  getSessionName(): string | undefined;
-  getCwd(): string;
+export interface RecallSessionData {
+  entries: SessionEntryLike[];
+  name?: string;
+  cwd?: string;
 }
 
 export interface SessionEntryLike {
@@ -93,13 +100,15 @@ export interface RecallHistoryRequest {
   currentSessionEntries: SessionEntryLike[];
   currentSessionFile?: string;
   currentSessionName?: string;
+  /** Git root of currentCwd, resolved once when the picker opens; required by Repo scope. */
+  repoRoot?: string;
 }
 
 export interface HistoryDependencies {
-  list(cwd: string, sessionDir?: string): Promise<RecallSessionInfo[]>;
-  listAll(): Promise<RecallSessionInfo[]>;
-  open(path: string): RecallSessionLike;
-  findRepoRoot(cwd: string): string | undefined;
+  list(cwd: string, sessionDir?: string, signal?: AbortSignal): Promise<RecallSessionInfo[]>;
+  /** Lists every project's sessions; `sessionDir` is the current session's directory. */
+  listAll(sessionDir: string | undefined, signal?: AbortSignal): Promise<RecallSessionInfo[]>;
+  readSession(path: string, signal?: AbortSignal): Promise<RecallSessionData>;
   yieldToUi(): Promise<void>;
 }
 
@@ -107,6 +116,11 @@ export interface RecallPickerOptions {
   initialQuery: string;
   previousDraft: string;
   settings: RecallSettings;
+  /**
+   * Resolves the git root of a cwd (undefined outside a repository). The picker calls it after it
+   * opens, so a slow git never delays the overlay; `signal` aborts when the picker closes.
+   */
+  findRepoRoot(cwd: string, signal?: AbortSignal): Promise<string | undefined>;
 }
 
 export interface RecallSettingsFlowResult {

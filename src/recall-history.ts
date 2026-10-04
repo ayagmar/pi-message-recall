@@ -1,13 +1,25 @@
-import { execFileSync } from "node:child_process";
-import { resolve } from "node:path";
-import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { LOAD_YIELD_INTERVAL, MAX_PREVIEW_LENGTH } from "./recall-constants.js";
+import { readFile } from "node:fs/promises";
+import { dirname, isAbsolute, type PlatformPath, relative, resolve, sep } from "node:path";
+import {
+  type ExecOptions,
+  type ExecResult,
+  getAgentDir,
+  migrateSessionEntries,
+  parseSessionEntries,
+  SessionManager,
+} from "@earendil-works/pi-coding-agent";
+import {
+  LOAD_YIELD_INTERVAL,
+  MAX_PREVIEW_LENGTH,
+  REPO_ROOT_LOOKUP_TIMEOUT_MS,
+} from "./recall-constants.js";
 import {
   type HistoryDependencies,
   type RecallHistoryRequest,
   type RecallLoadProgress,
   type RecallMessage,
   type RecallScope,
+  type RecallSessionData,
   type RecallSessionInfo,
   type SessionEntryLike,
 } from "./recall-types.js";
@@ -15,8 +27,8 @@ import {
 const CURRENT_SESSION_SENTINEL = "__current_session__";
 
 const defaultHistoryDependencies: HistoryDependencies = {
-  list: async (cwd, sessionDir) => {
-    const sessions = await SessionManager.list(cwd, sessionDir);
+  list: async (cwd, sessionDir, signal) => {
+    const sessions = await SessionManager.list(cwd, sessionDir, undefined, signal);
     return sessions.map((session) => ({
       path: session.path,
       cwd: session.cwd,
@@ -25,8 +37,11 @@ const defaultHistoryDependencies: HistoryDependencies = {
       isCurrentSession: false,
     }));
   },
-  listAll: async () => {
-    const sessions = await SessionManager.listAll();
+  listAll: async (sessionDir, signal) => {
+    const customSessionDir = resolveCustomSessionDir(sessionDir, getAgentDir());
+    const sessions = customSessionDir
+      ? await SessionManager.listAll(customSessionDir, undefined, signal)
+      : await SessionManager.listAll(undefined, signal);
     return sessions.map((session) => ({
       path: session.path,
       cwd: session.cwd,
@@ -35,17 +50,33 @@ const defaultHistoryDependencies: HistoryDependencies = {
       isCurrentSession: false,
     }));
   },
-  open: (path) => SessionManager.open(path),
-  findRepoRoot: findGitRoot,
+  readSession: readSessionFile,
   yieldToUi: () => new Promise((resolveYield) => setTimeout(resolveYield, 0)),
 };
 
-export function getAvailableScopes(
-  cwd: string,
-  dependencies: Pick<HistoryDependencies, "findRepoRoot"> = defaultHistoryDependencies
-): RecallScope[] {
+/**
+ * The session directory to scan for the All and Repo scopes, or undefined for Pi's default tree.
+ * Pi keeps one subdirectory per cwd under `<agentDir>/sessions`; a custom session directory
+ * (`sessionDir` setting, `--session-dir`, PI_CODING_AGENT_SESSION_DIR) is flat and holds every
+ * project's sessions, so it has to be listed directly, like /resume does. An empty dir is an
+ * in-memory session, which uses the default tree.
+ */
+export function resolveCustomSessionDir(
+  sessionDir: string | undefined,
+  agentDir: string
+): string | undefined {
+  if (!sessionDir) {
+    return undefined;
+  }
+
+  const resolved = resolve(sessionDir);
+  return dirname(resolved) === resolve(agentDir, "sessions") ? undefined : resolved;
+}
+
+/** The scopes the picker offers; Repo needs the git root of the current cwd. */
+export function getAvailableScopes(repoRoot: string | undefined): RecallScope[] {
   const scopes: RecallScope[] = ["project"];
-  if (dependencies.findRepoRoot(cwd)) {
+  if (repoRoot) {
     scopes.push("repo");
   }
   scopes.push("all");
@@ -111,7 +142,7 @@ export async function loadMessagesForScope(
   }
 ): Promise<RecallLoadProgress> {
   const dependencies = options?.dependencies ?? defaultHistoryDependencies;
-  const listed = await listSessionsForScope(request, dependencies);
+  const listed = await listSessionsForScope(request, dependencies, options?.signal);
   const progress: RecallLoadProgress = {
     scope: request.scope,
     totalSessions: listed.sessions.length,
@@ -136,10 +167,10 @@ export async function loadMessagesForScope(
       let sessionCwd = request.currentCwd;
 
       if (!isCurrent) {
-        const openedSession = dependencies.open(sessionInfo.path);
-        sessionEntries = openedSession.getEntries();
-        sessionName = openedSession.getSessionName() ?? sessionInfo.name;
-        sessionCwd = openedSession.getCwd();
+        const session = await dependencies.readSession(sessionInfo.path, options?.signal);
+        sessionEntries = session.entries;
+        sessionName = session.name ?? sessionInfo.name;
+        sessionCwd = session.cwd ?? sessionInfo.cwd;
       }
 
       const messages = extractUserMessages(sessionEntries, {
@@ -170,13 +201,68 @@ export async function loadMessagesForScope(
   return { ...progress };
 }
 
-export function findGitRoot(cwd: string): string | undefined {
+/**
+ * Reads a persisted session for recall without side effects. SessionManager.open() is not
+ * read-only: it rewrites older-version session files in place when it migrates them, and recall
+ * scans other projects' sessions, so the migration only happens in memory here.
+ */
+export async function readSessionFile(
+  path: string,
+  signal?: AbortSignal
+): Promise<RecallSessionData> {
+  const entries = parseSessionEntries(
+    await readFile(path, { encoding: "utf-8", ...(signal ? { signal } : {}) })
+  );
+  const header = entries.find((entry) => entry.type === "session");
+  if (!header) {
+    throw new Error(`Not a Pi session file: ${path}`);
+  }
+
+  migrateSessionEntries(entries);
+
+  let name: string | undefined;
+  const sessionEntries: SessionEntryLike[] = [];
+  for (const entry of entries) {
+    if (entry.type === "session") {
+      continue;
+    }
+
+    // Like SessionManager.getSessionName(): the latest session_info wins, and "" clears the name.
+    if (entry.type === "session_info") {
+      name = entry.name?.trim() || undefined;
+    }
+    sessionEntries.push(entry as SessionEntryLike);
+  }
+
+  return {
+    entries: sessionEntries,
+    ...(name ? { name } : {}),
+    ...(typeof header.cwd === "string" ? { cwd: header.cwd } : {}),
+  };
+}
+
+export type ExecCommand = (
+  command: string,
+  args: string[],
+  options?: ExecOptions
+) => Promise<Pick<ExecResult, "stdout" | "code" | "killed">>;
+
+/**
+ * The git root of `cwd`, or undefined outside a repository. Asynchronous and time-limited (via
+ * pi.exec) so a slow or hung git never blocks the TUI.
+ */
+export async function findGitRepoRoot(
+  exec: ExecCommand,
+  cwd: string,
+  signal?: AbortSignal
+): Promise<string | undefined> {
   try {
-    const result = execFileSync("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
-      encoding: "utf-8",
-      stdio: ["ignore", "pipe", "ignore"],
-    }).trim();
-    return result ? resolve(result) : undefined;
+    const result = await exec("git", ["-C", cwd, "rev-parse", "--show-toplevel"], {
+      timeout: REPO_ROOT_LOOKUP_TIMEOUT_MS,
+      ...(signal ? { signal } : {}),
+    });
+    const root = result.stdout.trim();
+    return result.code === 0 && !result.killed && root ? resolve(root) : undefined;
   } catch {
     return undefined;
   }
@@ -240,11 +326,16 @@ function resolveEntryTimestamp(
 
 function buildPreview(text: string): string {
   const normalized = normalizeWhitespace(text);
-  if (normalized.length <= MAX_PREVIEW_LENGTH) {
+  // Count code points, not UTF-16 units, so the cut never splits an emoji's surrogate pair.
+  const codePoints = Array.from(normalized);
+  if (codePoints.length <= MAX_PREVIEW_LENGTH) {
     return normalized;
   }
 
-  return `${normalized.slice(0, MAX_PREVIEW_LENGTH - 1).trimEnd()}…`;
+  return `${codePoints
+    .slice(0, MAX_PREVIEW_LENGTH - 1)
+    .join("")
+    .trimEnd()}…`;
 }
 
 function normalizeWhitespace(text: string): string {
@@ -253,29 +344,30 @@ function normalizeWhitespace(text: string): string {
 
 async function listSessionsForScope(
   request: RecallHistoryRequest,
-  dependencies: HistoryDependencies
+  dependencies: HistoryDependencies,
+  signal: AbortSignal | undefined
 ): Promise<{ sessions: RecallSessionInfo[]; unavailableReason?: string }> {
   if (request.scope === "project") {
-    const sessions = await dependencies.list(request.currentCwd, request.currentSessionDir);
+    const sessions = await dependencies.list(request.currentCwd, request.currentSessionDir, signal);
     return { sessions: attachCurrentSession(sessions, request) };
   }
 
-  const [allSessions, projectSessions] = await Promise.all([
-    dependencies.listAll(),
-    dependencies.list(request.currentCwd, request.currentSessionDir),
-  ]);
-  const combined = dedupeSessions([...allSessions, ...projectSessions]);
-
-  if (request.scope === "all") {
-    return { sessions: attachCurrentSession(combined, request) };
-  }
-
-  const repoRoot = dependencies.findRepoRoot(request.currentCwd);
-  if (!repoRoot) {
+  const repoRoot = request.repoRoot;
+  if (request.scope === "repo" && !repoRoot) {
     return {
       sessions: [],
       unavailableReason: "Repo scope is only available inside a git repository.",
     };
+  }
+
+  const [allSessions, projectSessions] = await Promise.all([
+    dependencies.listAll(request.currentSessionDir, signal),
+    dependencies.list(request.currentCwd, request.currentSessionDir, signal),
+  ]);
+  const combined = dedupeSessions([...allSessions, ...projectSessions]);
+
+  if (request.scope === "all" || !repoRoot) {
+    return { sessions: attachCurrentSession(combined, request) };
   }
 
   const filtered = combined.filter((session) => isWithinRoot(repoRoot, session.cwd));
@@ -338,10 +430,26 @@ function compareSessions(left: RecallSessionInfo, right: RecallSessionInfo): num
   return right.modified.getTime() - left.modified.getTime();
 }
 
-function isWithinRoot(root: string, candidate: string): boolean {
-  const normalizedRoot = resolve(root);
-  const normalizedCandidate = resolve(candidate);
+type PathApi = Pick<PlatformPath, "isAbsolute" | "relative" | "resolve" | "sep">;
+
+const platformPath: PathApi = { isAbsolute, relative, resolve, sep };
+
+/**
+ * Whether `candidate` is `root` or lives below it. Uses path.relative so Windows separators and
+ * drive-letter case work. An empty cwd (a session header without one) is never inside the repo.
+ */
+export function isWithinRoot(
+  root: string,
+  candidate: string,
+  pathApi: PathApi = platformPath
+): boolean {
+  if (!candidate) {
+    return false;
+  }
+
+  const fromRoot = pathApi.relative(pathApi.resolve(root), pathApi.resolve(candidate));
   return (
-    normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`)
+    fromRoot === "" ||
+    (fromRoot !== ".." && !fromRoot.startsWith(`..${pathApi.sep}`) && !pathApi.isAbsolute(fromRoot))
   );
 }

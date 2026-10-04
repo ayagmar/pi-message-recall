@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { type KeybindingsConfig } from "@earendil-works/pi-tui";
 import {
   buildRecallStatusText,
   createRecallSettings,
@@ -11,7 +12,12 @@ import {
   normalizeRecallSettings,
   saveRecallSettings,
 } from "../src/recall-settings.js";
-import { getShortcutStatus, validateShortcutKey } from "../src/recall-shortcut.js";
+import {
+  findReservedShortcutConflict,
+  getDefaultReservedAppKeybindings,
+  getShortcutStatus,
+  validateShortcutKey,
+} from "../src/recall-shortcut.js";
 
 void test("createRecallSettings returns the default scope, layout, and shortcut", () => {
   assert.deepEqual(createRecallSettings(), {
@@ -73,7 +79,32 @@ void test("loadRecallSettings falls back to defaults when settings.json is inval
 void test("shortcut validation accepts valid combos and rejects plain typing", () => {
   assert.equal(validateShortcutKey("ctrl+r").normalized, "ctrl+r");
   assert.equal(validateShortcutKey("alt+r").normalized, "alt+r");
-  assert.match(validateShortcutKey("r").error ?? "", /must include ctrl and\/or alt/i);
+  assert.match(validateShortcutKey("r").error ?? "", /must include ctrl, alt or super/i);
+  assert.match(validateShortcutKey("shift+r").error ?? "", /must include ctrl, alt or super/i);
+});
+
+void test("shortcut validation accepts every Pi key id Recall supports", () => {
+  // Pi's KeyId union includes the super modifier, F1-F12, Insert and Clear.
+  assert.equal(validateShortcutKey("super+k").normalized, "super+k");
+  assert.equal(validateShortcutKey("Super+Alt+K").normalized, "alt+super+k");
+  assert.equal(validateShortcutKey("ctrl+f5").normalized, "ctrl+f5");
+  assert.equal(validateShortcutKey("alt+insert").normalized, "alt+insert");
+  assert.equal(validateShortcutKey("ctrl+clear").normalized, "ctrl+clear");
+  // KeyId spells these in camelCase, which is also what parseKey() reports.
+  assert.equal(validateShortcutKey("ctrl+pageup").normalized, "ctrl+pageUp");
+  assert.equal(validateShortcutKey("ctrl+pageDown").normalized, "ctrl+pageDown");
+  assert.equal(validateShortcutKey("ctrl+esc").normalized, "ctrl+escape");
+  // Symbol keys stay out: terminals report Ctrl+symbol combos inconsistently.
+  assert.match(validateShortcutKey("ctrl+/").error ?? "", /letter, digit, or a supported/i);
+  assert.match(validateShortcutKey("hyper+r").error ?? "", /valid pi key combo/i);
+
+  const status = getShortcutStatus({ ...createRecallSettings(), shortcutKey: "super+f12" });
+  assert.equal(status.state, "active");
+  assert.equal(status.label, "Super+F12");
+  assert.equal(
+    getShortcutStatus({ ...createRecallSettings(), shortcutKey: "ctrl+pageup" }).label,
+    "Ctrl+PageUp"
+  );
 });
 
 void test("getShortcutStatus reports active and skipped shortcuts", () => {
@@ -103,4 +134,74 @@ void test("buildRecallStatusText includes the settings path and active shortcut 
   assert.match(text, /Default scope: Project/);
   assert.match(text, /Picker layout: Balanced/);
   assert.match(text, /Shortcut: Alt\+R \(configured\)/);
+});
+
+void test("buildRecallStatusText names the given scope toggle key, defaulting to Tab", () => {
+  const input = {
+    settings: createRecallSettings(),
+    settingsPath: "/tmp/recall-settings.json",
+    shortcutStatus: { state: "active", key: "alt+r", label: "Alt+R" } as const,
+  };
+
+  assert.match(buildRecallStatusText(input), /Picker scope toggle: Tab$/m);
+  assert.match(
+    buildRecallStatusText({ ...input, scopeToggleKey: "ctrl+t" }),
+    /Picker scope toggle: ctrl\+t$/m
+  );
+});
+
+void test("shortcut validation rejects keys Pi reserves for its own actions", () => {
+  const keybindings: KeybindingsConfig = {
+    "app.message.copy": "ctrl+x",
+    "app.model.cycleBackward": ["shift+ctrl+p"],
+    "app.thinking.save": "ctrl+s",
+  };
+
+  assert.match(
+    validateShortcutKey("ctrl+x", keybindings).error ?? "",
+    /Ctrl\+X is reserved by Pi for app\.message\.copy/
+  );
+  // Pi binds shift+ctrl+p; the modifier order must not hide the conflict.
+  assert.match(
+    validateShortcutKey("Ctrl+Shift+P", keybindings).error ?? "",
+    /reserved by Pi for app\.model\.cycleBackward/
+  );
+  // Non-reserved Pi bindings can be overridden by extensions.
+  assert.equal(validateShortcutKey("ctrl+s", keybindings).normalized, "ctrl+s");
+  assert.equal(validateShortcutKey("ctrl+x").normalized, "ctrl+x");
+  assert.equal(findReservedShortcutConflict("alt+r", keybindings), undefined);
+});
+
+void test("Pi's default reserved app keys follow its platform-specific defaults", () => {
+  const linux = getDefaultReservedAppKeybindings("linux", {});
+  assert.equal(findReservedShortcutConflict("alt+enter", linux), "app.message.followUp");
+  assert.equal(findReservedShortcutConflict("ctrl+shift+p", linux), "app.model.cycleBackward");
+  assert.equal(findReservedShortcutConflict("ctrl+z", linux), "app.suspend");
+  assert.equal(findReservedShortcutConflict("alt+p", linux), undefined);
+  assert.equal(findReservedShortcutConflict("alt+r", linux), undefined);
+
+  const wsl = getDefaultReservedAppKeybindings("linux", { WSL_DISTRO_NAME: "Ubuntu" });
+  assert.equal(findReservedShortcutConflict("ctrl+q", wsl), "app.message.followUp");
+  assert.equal(findReservedShortcutConflict("alt+p", wsl), "app.model.cycleBackward");
+  assert.equal(findReservedShortcutConflict("alt+enter", wsl), undefined);
+
+  const windows = getDefaultReservedAppKeybindings("win32", {});
+  assert.equal(findReservedShortcutConflict("ctrl+z", windows), undefined);
+  assert.equal(findReservedShortcutConflict("ctrl+q", windows), "app.message.followUp");
+});
+
+void test("getShortcutStatus flags a saved shortcut that Pi reserves", () => {
+  const settings = { ...createRecallSettings(), shortcutKey: "ctrl+x" };
+  assert.equal(getShortcutStatus(settings).state, "active");
+
+  const status = getShortcutStatus(settings, { "app.message.copy": "ctrl+x" });
+  assert.equal(status.state, "conflict");
+  assert.match(status.detail, /reserves it for app\.message\.copy/);
+
+  const text = buildRecallStatusText({
+    settings,
+    settingsPath: "/tmp/s.json",
+    shortcutStatus: status,
+  });
+  assert.match(text, /Shortcut: Ctrl\+X \(conflicts with Pi: /);
 });

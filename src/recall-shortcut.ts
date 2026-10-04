@@ -1,4 +1,4 @@
-import { type KeyId } from "@earendil-works/pi-tui";
+import { type KeybindingsConfig, type KeyId } from "@earendil-works/pi-tui";
 import { DEFAULT_SHORTCUT_KEY } from "./recall-constants.js";
 import {
   type RecallSettings,
@@ -6,40 +6,37 @@ import {
   type ShortcutValidationResult,
 } from "./recall-types.js";
 
-const MODIFIER_ORDER = ["ctrl", "shift", "alt"] as const;
+// Modifiers and keys accepted by Pi's KeyId union (@earendil-works/pi-tui keys.ts), which only
+// exists as a type. Keep in sync when Pi adds keys.
+const MODIFIER_ORDER = ["ctrl", "shift", "alt", "super"] as const;
 const MODIFIERS = new Set<string>(MODIFIER_ORDER);
-const SPECIAL_KEYS = new Set<string>([
-  "escape",
-  "esc",
-  "enter",
-  "return",
-  "tab",
-  "space",
-  "backspace",
-  "delete",
-  "insert",
-  "clear",
-  "home",
-  "end",
-  "pageup",
-  "pagedown",
-  "up",
-  "down",
-  "left",
-  "right",
-  "f1",
-  "f2",
-  "f3",
-  "f4",
-  "f5",
-  "f6",
-  "f7",
-  "f8",
-  "f9",
-  "f10",
-  "f11",
-  "f12",
+// Modifiers that keep a shortcut from interfering with normal typing.
+const SHORTCUT_MODIFIERS = new Set<string>(["ctrl", "alt", "super"]);
+// Lowercase spelling -> KeyId spelling. matchesKey() lowercases key ids, but the KeyId union
+// spells PageUp/PageDown in camelCase.
+const SPECIAL_KEYS = new Map<string, string>([
+  ["escape", "escape"],
+  ["esc", "escape"],
+  ["enter", "enter"],
+  ["return", "enter"],
+  ["tab", "tab"],
+  ["space", "space"],
+  ["backspace", "backspace"],
+  ["delete", "delete"],
+  ["insert", "insert"],
+  ["clear", "clear"],
+  ["home", "home"],
+  ["end", "end"],
+  ["pageup", "pageUp"],
+  ["pagedown", "pageDown"],
+  ["up", "up"],
+  ["down", "down"],
+  ["left", "left"],
+  ["right", "right"],
+  ...Array.from({ length: 12 }, (_, index): [string, string] => [`f${index + 1}`, `f${index + 1}`]),
 ]);
+// Valid Pi keys, but not accepted as Recall shortcuts: terminals report Ctrl+symbol combos
+// inconsistently.
 const SYMBOL_KEYS = new Set<string>([
   "`",
   "-",
@@ -91,22 +88,62 @@ const DISPLAY_NAMES: Record<string, string> = {
   left: "Left",
   right: "Right",
 };
-const VALID_KEY_ID_SPECIAL_KEYS = new Set<string>([
-  "escape",
-  "enter",
-  "tab",
-  "space",
-  "backspace",
-  "delete",
-  "home",
-  "end",
-  "pageup",
-  "pagedown",
-  "up",
-  "down",
-  "left",
-  "right",
+
+// Mirrors RESERVED_KEYBINDINGS_FOR_EXTENSION_CONFLICTS in Pi's extension runner, which is not
+// exported. Pi skips (with only a startup diagnostic) any extension shortcut bound to one of these.
+const PI_RESERVED_KEYBINDINGS = new Set<string>([
+  "app.interrupt",
+  "app.clear",
+  "app.exit",
+  "app.suspend",
+  "app.thinking.cycle",
+  "app.model.cycleForward",
+  "app.model.cycleBackward",
+  "app.model.select",
+  "app.tools.expand",
+  "app.thinking.toggle",
+  "app.editor.external",
+  "app.message.copy",
+  "app.message.followUp",
+  "tui.input.submit",
+  "tui.select.confirm",
+  "tui.select.cancel",
+  "tui.input.copy",
+  "tui.editor.deleteToLineEnd",
 ]);
+
+/**
+ * Pi 1.0.1's default keys for the reserved app.* actions (KEYBINDINGS in pi-coding-agent's
+ * core/keybindings.ts, which extensions cannot build at runtime). Outside the TUI Pi never installs
+ * its keybindings, so these stand in to reject reserved keys there. Custom remaps from
+ * keybindings.json are not visible outside the TUI, which is why session_start still reports
+ * conflicts. Keep in sync with Pi.
+ */
+export function getDefaultReservedAppKeybindings(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env
+): KeybindingsConfig {
+  // Mirrors useWindowsKeybindings() in Pi: Windows itself, and Linux under WSL.
+  const windowsKeybindings =
+    platform === "win32" ||
+    (platform === "linux" && Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP));
+
+  return {
+    "app.interrupt": "escape",
+    "app.clear": "ctrl+c",
+    "app.exit": "ctrl+d",
+    "app.suspend": platform === "win32" ? [] : "ctrl+z",
+    "app.thinking.cycle": "shift+tab",
+    "app.model.cycleForward": "ctrl+p",
+    "app.model.cycleBackward": windowsKeybindings ? "alt+p" : "shift+ctrl+p",
+    "app.model.select": "ctrl+l",
+    "app.tools.expand": "ctrl+o",
+    "app.thinking.toggle": "ctrl+t",
+    "app.editor.external": "ctrl+g",
+    "app.message.copy": "ctrl+x",
+    "app.message.followUp": windowsKeybindings ? "ctrl+q" : "alt+enter",
+  };
+}
 
 interface ShortcutParts {
   modifiers: string[];
@@ -154,7 +191,34 @@ export function formatShortcutKey(value: string | undefined): string {
   return defaultParts ? formatShortcutParts(defaultParts) : DEFAULT_SHORTCUT_KEY;
 }
 
-export function validateShortcutKey(value: string): ShortcutValidationResult {
+/** Returns the reserved Pi action bound to `key`, if any. Modifier order does not matter. */
+export function findReservedShortcutConflict(
+  key: string,
+  keybindings: KeybindingsConfig | undefined
+): string | undefined {
+  const target = canonicalizeKeyId(key);
+  if (!target || !keybindings) {
+    return undefined;
+  }
+
+  for (const [keybinding, keys] of Object.entries(keybindings)) {
+    if (!PI_RESERVED_KEYBINDINGS.has(keybinding) || keys === undefined) {
+      continue;
+    }
+
+    const boundKeys: readonly string[] = Array.isArray(keys) ? keys : [keys];
+    if (boundKeys.some((boundKey) => canonicalizeKeyId(boundKey) === target)) {
+      return keybinding;
+    }
+  }
+
+  return undefined;
+}
+
+export function validateShortcutKey(
+  value: string,
+  keybindings?: KeybindingsConfig
+): ShortcutValidationResult {
   const normalized = normalizeShortcutKey(value);
   if (!normalized) {
     return { error: "Use a valid Pi key combo like Alt+R or Ctrl+Alt+R." };
@@ -162,7 +226,7 @@ export function validateShortcutKey(value: string): ShortcutValidationResult {
 
   if (!hasShortcutModifier(normalized.split("+"))) {
     return {
-      error: "Recall shortcuts must include Ctrl and/or Alt so normal typing keeps working.",
+      error: "Recall shortcuts must include Ctrl, Alt or Super so normal typing keeps working.",
     };
   }
 
@@ -172,10 +236,20 @@ export function validateShortcutKey(value: string): ShortcutValidationResult {
     };
   }
 
+  const reservedFor = findReservedShortcutConflict(normalized, keybindings);
+  if (reservedFor) {
+    return {
+      error: `${formatShortcutKey(normalized)} is reserved by Pi for ${reservedFor}. Choose another shortcut.`,
+    };
+  }
+
   return { normalized };
 }
 
-export function getShortcutStatus(settings: RecallSettings): ShortcutStatus {
+export function getShortcutStatus(
+  settings: RecallSettings,
+  keybindings?: KeybindingsConfig
+): ShortcutStatus {
   const label = formatShortcutKey(settings.shortcutKey);
 
   if (!settings.shortcutEnabled) {
@@ -195,11 +269,32 @@ export function getShortcutStatus(settings: RecallSettings): ShortcutStatus {
     };
   }
 
+  const reservedFor = findReservedShortcutConflict(normalized, keybindings);
+  if (reservedFor) {
+    return {
+      state: "conflict",
+      key: normalized,
+      label: formatShortcutKey(normalized),
+      detail: `Pi reserves it for ${reservedFor}, so Pi may ignore it. Use /recall settings to choose a new key.`,
+    };
+  }
+
   return {
     state: "active",
     key: normalized,
     label: formatShortcutKey(normalized),
   };
+}
+
+function canonicalizeKeyId(value: string): string | undefined {
+  const parts = parseShortcutParts(value);
+  if (!parts) {
+    return undefined;
+  }
+
+  const key = parts.key === "esc" ? "escape" : parts.key === "return" ? "enter" : parts.key;
+  const modifiers = [...new Set(parts.modifiers)].sort();
+  return [...modifiers, key].join("+");
 }
 
 function parseShortcutParts(value: string | undefined): ShortcutParts | undefined {
@@ -253,14 +348,9 @@ function normalizeBaseKey(value: string | undefined): string | undefined {
     return value;
   }
 
-  if (SPECIAL_KEYS.has(value)) {
-    if (value === "return") {
-      return "enter";
-    }
-    if (value === "esc") {
-      return "escape";
-    }
-    return value;
+  const specialKey = SPECIAL_KEYS.get(value);
+  if (specialKey) {
+    return specialKey;
   }
 
   if (SYMBOL_KEYS.has(value)) {
@@ -272,7 +362,7 @@ function normalizeBaseKey(value: string | undefined): string | undefined {
 
 function hasShortcutModifier(tokens: Iterable<string>): boolean {
   for (const token of tokens) {
-    if (token === "ctrl" || token === "alt") {
+    if (SHORTCUT_MODIFIERS.has(token)) {
       return true;
     }
   }
@@ -280,36 +370,14 @@ function hasShortcutModifier(tokens: Iterable<string>): boolean {
   return false;
 }
 
+/** Whether `value` is a normalized shortcut that Pi accepts as a KeyId and Recall allows. */
 function isValidKeyId(value: string): value is KeyId {
   const parts = parseShortcutParts(value);
-  if (!parts) {
+  if (!parts || normalizeShortcutKey(value) !== value || !hasShortcutModifier(parts.modifiers)) {
     return false;
   }
 
-  const modifierSet = new Set(parts.modifiers);
-  if (modifierSet.size !== parts.modifiers.length) {
-    return false;
-  }
-
-  for (const modifier of modifierSet) {
-    if (!MODIFIERS.has(modifier)) {
-      return false;
-    }
-  }
-
-  if (!hasShortcutModifier(modifierSet)) {
-    return false;
-  }
-
-  if (SYMBOL_KEYS.has(parts.key)) {
-    return false;
-  }
-
-  if (/^[a-z0-9]$/.test(parts.key)) {
-    return true;
-  }
-
-  return VALID_KEY_ID_SPECIAL_KEYS.has(parts.key);
+  return /^[a-z0-9]$/.test(parts.key) || SPECIAL_KEYS.has(parts.key);
 }
 
 function formatShortcutParts(parts: ShortcutParts): string {

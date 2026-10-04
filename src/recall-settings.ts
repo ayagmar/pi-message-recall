@@ -9,7 +9,6 @@ import {
   RECALL_PICKER_LAYOUTS,
   RECALL_SCOPES,
 } from "./recall-constants.js";
-import { formatShortcutKey } from "./recall-shortcut.js";
 import {
   type RecallPickerLayoutPreference,
   type RecallScope,
@@ -93,6 +92,8 @@ export function buildRecallStatusText(input: {
   settings: RecallSettings;
   settingsPath: string;
   shortcutStatus: ShortcutStatus;
+  /** Key that toggles the picker scope; defaults to "Tab" when Pi's keybindings are not loaded. */
+  scopeToggleKey?: string | undefined;
 }): string {
   return [
     "## Message Recall",
@@ -100,7 +101,7 @@ export function buildRecallStatusText(input: {
     `- Default scope: ${formatRecallScope(input.settings.defaultScope)}`,
     `- Picker layout: ${formatRecallPickerLayout(input.settings.pickerLayout)}`,
     `- Shortcut: ${formatShortcutSummary(input.shortcutStatus)}`,
-    "- Picker scope toggle: Tab",
+    `- Picker scope toggle: ${input.scopeToggleKey ?? "Tab"}`,
     "- Search modes: empty = recent, quotes = exact phrase, re:<pattern> = regex",
     "- Recall is text-only and fills the editor without sending",
   ].join("\n");
@@ -113,7 +114,9 @@ function formatShortcutSummary(shortcutStatus: ShortcutStatus): string {
     case "disabled":
       return `${shortcutStatus.label} (disabled)`;
     case "skipped":
-      return `${formatShortcutKey(shortcutStatus.label)} (not loaded: ${shortcutStatus.detail})`;
+      return `${shortcutStatus.label} (not loaded: ${shortcutStatus.detail})`;
+    case "conflict":
+      return `${shortcutStatus.label} (conflicts with Pi: ${shortcutStatus.detail})`;
   }
 }
 

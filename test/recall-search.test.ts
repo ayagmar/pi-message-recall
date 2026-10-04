@@ -56,6 +56,126 @@ void test("text queries support quoted phrases", () => {
   );
 });
 
+void test("recent results dedupe identical prompts and keep the newest copy", () => {
+  const result = searchRecallMessages(
+    [
+      {
+        id: "newest-duplicate",
+        sessionPath: "/sessions/newest.jsonl",
+        sessionCwd: "/work/project",
+        timestamp: 4,
+        text: "Keep the key hints visible in the picker",
+        preview: "Keep the key hints visible in the picker",
+        normalizedText: "keep the key hints visible in the picker",
+        isCurrentSession: true,
+      },
+      {
+        id: "unique",
+        sessionPath: "/sessions/unique.jsonl",
+        sessionCwd: "/work/project",
+        timestamp: 3,
+        text: "Add a smarter loading state",
+        preview: "Add a smarter loading state",
+        normalizedText: "add a smarter loading state",
+        isCurrentSession: false,
+      },
+      {
+        id: "older-duplicate",
+        sessionPath: "/sessions/older.jsonl",
+        sessionCwd: "/work/project",
+        timestamp: 2,
+        text: "Keep the key hints visible in the picker",
+        preview: "Keep the key hints visible in the picker",
+        normalizedText: "keep the key hints visible in the picker",
+        isCurrentSession: false,
+      },
+    ],
+    ""
+  );
+
+  assert.equal(result.mode, "recent");
+  assert.deepEqual(
+    result.matches.map((message) => message.id),
+    ["newest-duplicate", "unique"]
+  );
+});
+
+void test("text queries rank direct matches before fuzzy fallback matches", () => {
+  const result = searchRecallMessages(
+    [
+      {
+        id: "fuzzy-newer",
+        sessionPath: "/sessions/fuzzy.jsonl",
+        sessionCwd: "/work/project",
+        timestamp: 3,
+        text: "P I C K E R hints for the modal",
+        preview: "P I C K E R hints for the modal",
+        normalizedText: "p i c k e r hints for the modal",
+        isCurrentSession: false,
+      },
+      {
+        id: "exact-older",
+        sessionPath: "/sessions/exact.jsonl",
+        sessionCwd: "/work/project",
+        timestamp: 2,
+        text: "Keep the picker hints visible",
+        preview: "Keep the picker hints visible",
+        normalizedText: "keep the picker hints visible",
+        isCurrentSession: false,
+      },
+    ],
+    "picker hints"
+  );
+
+  assert.equal(result.mode, "text");
+  assert.deepEqual(
+    result.matches.map((message) => message.id),
+    ["exact-older", "fuzzy-newer"]
+  );
+});
+
+void test("text queries fall back to fuzzy subsequence matches", () => {
+  const result = searchRecallMessages(messages, "ldng spnr regrssn");
+
+  assert.equal(result.mode, "text");
+  assert.deepEqual(
+    result.matches.map((message) => message.id),
+    ["newest"]
+  );
+});
+
+void test("quoted phrases stay exact instead of falling back to fuzzy matches", () => {
+  const result = searchRecallMessages(
+    [
+      {
+        id: "fuzzy-only",
+        sessionPath: "/sessions/fuzzy-only.jsonl",
+        sessionCwd: "/work/project",
+        timestamp: 1,
+        text: "Keep the key very helpful hints visible",
+        preview: "Keep the key very helpful hints visible",
+        normalizedText: "keep the key very helpful hints visible",
+        isCurrentSession: false,
+      },
+    ],
+    '"key hints"'
+  );
+
+  assert.equal(result.mode, "text");
+  assert.deepEqual(result.matches, []);
+});
+
+void test("an unclosed quote searches for the phrase typed so far", () => {
+  const result = searchRecallMessages(messages, 'picker "key hin');
+
+  assert.equal(result.mode, "text");
+  assert.deepEqual(
+    result.matches.map((message) => message.id),
+    ["middle"]
+  );
+  assert.equal(searchRecallMessages(messages, '"').mode, "recent");
+});
+
 void test("regex queries match against original message text", () => {
   const result = searchRecallMessages(messages, "re:/loading.*regression/g");
 
@@ -95,4 +215,21 @@ void test("explicit searches return every loaded match", () => {
   assert.equal(result.mode, "text");
   assert.equal(result.matches.length, 250);
   assert.equal(result.matches.at(-1)?.id, "match-249");
+});
+
+void test("fuzzy fallback handles non-BMP characters in the query", () => {
+  const result = searchRecallMessages(
+    [
+      {
+        ...messages[0],
+        id: "emoji",
+        text: "ship it 🚀 tonight",
+        preview: "ship it 🚀 tonight",
+        normalizedText: "ship it 🚀 tonight",
+      } as RecallMessage,
+    ],
+    "s🚀t"
+  );
+
+  assert.equal(result.matches.length, 1);
 });

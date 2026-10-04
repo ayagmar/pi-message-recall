@@ -1,9 +1,18 @@
 import { homedir } from "node:os";
-import { type ExtensionContext, type KeybindingsManager } from "@earendil-works/pi-coding-agent";
+import { sep } from "node:path";
+import {
+  type ExtensionContext,
+  type KeybindingsManager,
+  keyHint,
+  keyText,
+  rawKeyHint,
+} from "@earendil-works/pi-coding-agent";
 import {
   type Component,
   type Focusable,
+  getKeybindings,
   Input,
+  type KeybindingsConfig,
   parseKey,
   type SelectItem,
   SelectList,
@@ -25,7 +34,12 @@ import {
   formatRecallScope,
   saveRecallSettings,
 } from "./recall-settings.js";
-import { formatShortcutKey, normalizeShortcutKey, validateShortcutKey } from "./recall-shortcut.js";
+import {
+  formatShortcutKey,
+  getDefaultReservedAppKeybindings,
+  normalizeShortcutKey,
+  validateShortcutKey,
+} from "./recall-shortcut.js";
 import {
   type RecallLoadProgress,
   type RecallMessage,
@@ -35,16 +49,18 @@ import {
   type RecallSearchResult,
   type RecallSettings,
   type RecallSettingsFlowResult,
+  type SessionEntryLike,
 } from "./recall-types.js";
 
 export async function openRecallPicker(
   ctx: ExtensionContext,
   options: RecallPickerOptions
 ): Promise<RecallMessage | undefined> {
-  const availableScopes = getAvailableScopes(ctx.cwd);
-  const initialScope = resolveRecallScope(options.settings.defaultScope, availableScopes);
   const layoutPreset = getRecallPickerLayoutPreset(options.settings.pickerLayout);
 
+  // Nothing is awaited before ctx.ui.custom(): keys typed right after the shortcut must reach the
+  // picker's search field, not the editor whose draft was already captured. The git root (which
+  // decides whether Repo scope is offered) is resolved by the dialog once it is open.
   return ctx.ui.custom<RecallMessage | undefined>(
     (tui, theme, keybindings, done) => {
       return new RecallPickerDialog(
@@ -52,14 +68,15 @@ export async function openRecallPicker(
         keybindings,
         {
           initialQuery: options.initialQuery,
-          initialScope,
-          availableScopes,
+          defaultScope: options.settings.defaultScope,
+          findRepoRoot: (signal) => options.findRepoRoot(ctx.cwd, signal),
           layoutPreference: options.settings.pickerLayout,
           currentCwd: ctx.cwd,
           currentSessionDir: ctx.sessionManager.getSessionDir(),
-          currentSessionEntries: ctx.sessionManager.getEntries() as Parameters<
-            typeof loadMessagesForScope
-          >[0]["currentSessionEntries"],
+          // All branches on purpose (not getBranch()): prompts from abandoned branches are still
+          // text the user typed. Only role "user" message entries are read, so system messages and
+          // usage/context_edit entries are ignored.
+          currentSessionEntries: ctx.sessionManager.getEntries() as SessionEntryLike[],
           currentSessionFile: ctx.sessionManager.getSessionFile() ?? undefined,
           currentSessionName: ctx.sessionManager.getSessionName() ?? undefined,
         },
@@ -109,7 +126,8 @@ export async function openRecallSettingsFlow(
     ];
     const selected = await ctx.ui.select("Message Recall settings", choices);
     if (!selected) {
-      return undefined;
+      // Scope and layout changes are saved as soon as they are picked, so report them on exit too.
+      return settings === options.settings ? undefined : { settings, reloadRequired: false };
     }
 
     const index = choices.indexOf(selected);
@@ -420,10 +438,46 @@ export function resolveRecallPickerWindow(
   };
 }
 
+export function resolveRetainedSelectionIndex(
+  results: RecallMessage[],
+  previousSelectionId: string | undefined,
+  previousSelectionText: string | undefined
+): number {
+  if (results.length === 0) {
+    return -1;
+  }
+
+  if (previousSelectionId) {
+    const byId = results.findIndex((message) => message.id === previousSelectionId);
+    if (byId >= 0) {
+      return byId;
+    }
+  }
+
+  if (previousSelectionText) {
+    return results.findIndex((message) => message.text === previousSelectionText);
+  }
+
+  return -1;
+}
+
+/**
+ * Creates the picker's search field with the cursor after `initialQuery`, so typing refines the
+ * prefilled query instead of being inserted in front of it (Input.setValue() keeps the cursor at 0).
+ */
+export function createSearchInput(initialQuery: string): Input {
+  const input = new Input();
+  if (initialQuery) {
+    // A bracketed paste inserts at the cursor and moves past the text, whatever the keybindings.
+    input.handleInput(`\x1b[200~${initialQuery}\x1b[201~`);
+  }
+  return input;
+}
+
 class RecallPickerDialog implements Component, Focusable {
-  private readonly searchInput = new Input();
+  private readonly searchInput: Input;
   private readonly searchHint =
-    'Search with words, "quoted phrases", or re:<pattern>. Empty query shows recent prompts.';
+    'Search with words, "quoted phrases", or re:<pattern>. Empty query shows recent unique prompts.';
 
   private currentPageSize = RESULT_PAGE_SIZE;
   private currentVisibleResultCount = RESULT_PAGE_SIZE;
@@ -437,6 +491,10 @@ class RecallPickerDialog implements Component, Focusable {
   private selectedMessageId: string | undefined;
   private selectedIndex = 0;
   private loadAbort?: AbortController;
+  private readonly repoRootAbort = new AbortController();
+  private repoRoot: string | undefined;
+  private availableScopes: RecallScope[] = getAvailableScopes(undefined);
+  private scopeChangedByUser = false;
   private disposed = false;
   private _focused = false;
 
@@ -448,12 +506,12 @@ class RecallPickerDialog implements Component, Focusable {
     private readonly keybindings: KeybindingsManager,
     private readonly options: {
       initialQuery: string;
-      initialScope: RecallScope;
-      availableScopes: RecallScope[];
+      defaultScope: RecallScope;
+      findRepoRoot: (signal: AbortSignal) => Promise<string | undefined>;
       layoutPreference: RecallPickerLayoutPreference;
       currentCwd: string;
       currentSessionDir: string;
-      currentSessionEntries: Parameters<typeof loadMessagesForScope>[0]["currentSessionEntries"];
+      currentSessionEntries: SessionEntryLike[];
       currentSessionFile: string | undefined;
       currentSessionName: string | undefined;
     },
@@ -464,8 +522,9 @@ class RecallPickerDialog implements Component, Focusable {
       getTerminalColumns: () => number;
     }
   ) {
-    this.scope = options.initialScope;
-    this.searchInput.setValue(options.initialQuery);
+    // Repo scope is only offered once the git root is known; until then start in Project.
+    this.scope = resolveRecallScope(options.defaultScope, this.availableScopes);
+    this.searchInput = createSearchInput(options.initialQuery);
     this.searchInput.focused = true;
     this.state = {
       progress: {
@@ -484,6 +543,7 @@ class RecallPickerDialog implements Component, Focusable {
     this.refreshResults();
 
     void this.reloadScope(this.scope);
+    void this.resolveRepoRoot();
   }
 
   get focused(): boolean {
@@ -521,13 +581,14 @@ class RecallPickerDialog implements Component, Focusable {
         truncateToWidth(this.buildPreviewLine(innerWidth, layout.previewBodyLines), innerWidth)
       ),
       ...this.renderPreviewLines(innerWidth, layout.previewLines, layout.previewBodyLines),
-      this.theme.fg("dim", truncateToWidth(this.buildHelpLine(layout.pageSize), innerWidth)),
+      truncateToWidth(this.buildHelpLine(layout.pageSize), innerWidth),
     ];
 
     return renderDialogBox(this.theme, innerWidth, lines);
   }
   handleInput(data: string): void {
     if (this.keybindings.matches(data, "tui.input.tab")) {
+      this.scopeChangedByUser = true;
       void this.reloadScope(this.nextScope());
       return;
     }
@@ -570,6 +631,31 @@ class RecallPickerDialog implements Component, Focusable {
     this.callbacks.requestRender();
   }
 
+  private async resolveRepoRoot(): Promise<void> {
+    let repoRoot: string | undefined;
+    try {
+      repoRoot = await this.options.findRepoRoot(this.repoRootAbort.signal);
+    } catch {
+      repoRoot = undefined;
+    }
+
+    if (this.disposed || !repoRoot) {
+      return;
+    }
+
+    this.repoRoot = repoRoot;
+    this.availableScopes = getAvailableScopes(repoRoot);
+    if (!this.scopeChangedByUser) {
+      const defaultScope = resolveRecallScope(this.options.defaultScope, this.availableScopes);
+      if (defaultScope !== this.scope) {
+        void this.reloadScope(defaultScope);
+        return;
+      }
+    }
+
+    this.callbacks.requestRender();
+  }
+
   private async reloadScope(scope: RecallScope): Promise<void> {
     this.scope = scope;
     this.loadAbort?.abort();
@@ -606,6 +692,7 @@ class RecallPickerDialog implements Component, Focusable {
           ...(this.options.currentSessionName
             ? { currentSessionName: this.options.currentSessionName }
             : {}),
+          ...(this.repoRoot ? { repoRoot: this.repoRoot } : {}),
         },
         {
           onBatch: (messages, progress) => {
@@ -654,6 +741,7 @@ class RecallPickerDialog implements Component, Focusable {
 
     this.disposed = true;
     this.loadAbort?.abort();
+    this.repoRootAbort.abort();
     this.callbacks.onDone(value);
   }
 
@@ -709,7 +797,8 @@ class RecallPickerDialog implements Component, Focusable {
   }
 
   private refreshResults(): void {
-    const previousSelection = this.selectedMessageId;
+    const previousSelectionId = this.selectedMessageId;
+    const previousSelectionText = this.state.results[this.selectedIndex]?.text;
     const result = searchRecallMessages(this.state.messages, this.searchInput.getValue());
     this.state.results = result.matches;
     this.state.resultMode = result.mode;
@@ -723,9 +812,11 @@ class RecallPickerDialog implements Component, Focusable {
       return;
     }
 
-    const selectedIndex = previousSelection
-      ? this.state.results.findIndex((message) => message.id === previousSelection)
-      : -1;
+    const selectedIndex = resolveRetainedSelectionIndex(
+      this.state.results,
+      previousSelectionId,
+      previousSelectionText
+    );
     this.selectedIndex = selectedIndex >= 0 ? selectedIndex : 0;
     this.selectedMessageId = this.state.results[this.selectedIndex]?.id;
     this.rebuildSelectListForCurrentPage();
@@ -787,8 +878,15 @@ class RecallPickerDialog implements Component, Focusable {
       return;
     }
 
-    this.selectedIndex =
-      (this.selectedIndex + delta + this.state.results.length) % this.state.results.length;
+    const nextIndex = Math.max(
+      0,
+      Math.min(this.selectedIndex + delta, this.state.results.length - 1)
+    );
+    if (nextIndex === this.selectedIndex) {
+      return;
+    }
+
+    this.selectedIndex = nextIndex;
     this.selectedMessageId = this.state.results[this.selectedIndex]?.id;
     this.applyLayout(this.getLayout());
     this.rebuildSelectListForCurrentPage();
@@ -804,8 +902,12 @@ class RecallPickerDialog implements Component, Focusable {
     }
 
     const currentPageIndex = this.getCurrentPageIndex(pageSize);
+    const nextPageIndex = Math.max(0, Math.min(currentPageIndex + delta, pageCount - 1));
+    if (nextPageIndex === currentPageIndex) {
+      return;
+    }
+
     const localIndex = this.selectedIndex - currentPageIndex * pageSize;
-    const nextPageIndex = (currentPageIndex + delta + pageCount) % pageCount;
     this.selectedIndex = Math.min(
       nextPageIndex * pageSize + localIndex,
       this.state.results.length - 1
@@ -817,9 +919,9 @@ class RecallPickerDialog implements Component, Focusable {
   }
 
   private nextScope(): RecallScope {
-    const currentIndex = this.options.availableScopes.indexOf(this.scope);
-    const nextIndex = (currentIndex + 1) % this.options.availableScopes.length;
-    return this.options.availableScopes[nextIndex] ?? this.scope;
+    const currentIndex = this.availableScopes.indexOf(this.scope);
+    const nextIndex = (currentIndex + 1) % this.availableScopes.length;
+    return this.availableScopes[nextIndex] ?? this.scope;
   }
 
   private renderHeaderLine(width: number): string {
@@ -848,9 +950,7 @@ class RecallPickerDialog implements Component, Focusable {
 
   private renderScopeLine(width: number): string {
     const prefix = this.theme.fg("dim", "Scope ");
-    const pills = this.options.availableScopes
-      .map((scope) => this.renderScopePill(scope))
-      .join(" ");
+    const pills = this.availableScopes.map((scope) => this.renderScopePill(scope)).join(" ");
     return `${prefix}${truncateToWidth(pills, Math.max(1, width - visibleWidth(prefix)))}`;
   }
 
@@ -891,7 +991,10 @@ class RecallPickerDialog implements Component, Focusable {
       lines.push(
         this.theme.fg(
           "dim",
-          truncateToWidth("Switch scope with Tab or try another directory.", width)
+          truncateToWidth(
+            `Switch scope with ${keyText("tui.input.tab")} or try another directory.`,
+            width
+          )
         )
       );
       return lines;
@@ -934,7 +1037,10 @@ class RecallPickerDialog implements Component, Focusable {
       lines.push(
         this.theme.fg(
           "dim",
-          truncateToWidth("Try Tab for a wider scope once you have more history.", width)
+          truncateToWidth(
+            `Try ${keyText("tui.input.tab")} for a wider scope once you have more history.`,
+            width
+          )
         )
       );
       return lines;
@@ -963,7 +1069,7 @@ class RecallPickerDialog implements Component, Focusable {
           "dim",
           truncateToWidth(
             this.scope !== "all"
-              ? "Try shorter terms, quotes, regex, or press Tab to widen the scope."
+              ? `Try shorter terms, quotes, regex, or press ${keyText("tui.input.tab")} to widen the scope.`
               : "Try shorter terms, quoted phrases, or regex with re:<pattern>.",
             width
           )
@@ -1002,7 +1108,10 @@ class RecallPickerDialog implements Component, Focusable {
           ),
           this.theme.fg(
             "dim",
-            truncateToWidth("Press Enter to restore the highlighted prompt into the editor.", width)
+            truncateToWidth(
+              `Press ${keyText("tui.select.confirm")} to restore the highlighted prompt into the editor.`,
+              width
+            )
           ),
         ],
         previewLines
@@ -1028,7 +1137,7 @@ class RecallPickerDialog implements Component, Focusable {
     }
 
     if (this.state.resultMode === "text") {
-      return 'Text mode · combine words and "quoted phrases" to narrow results.';
+      return "Text mode · direct matches first, with fuzzy fallback for unquoted words.";
     }
 
     return this.searchHint;
@@ -1092,23 +1201,21 @@ class RecallPickerDialog implements Component, Focusable {
   }
 
   private buildHelpLine(pageSize: number): string {
-    const parts = [
-      formatKeybindingPair(this.keybindings, "tui.select.up", "tui.select.down", "move"),
-    ];
+    const parts = [rawKeyHint(`${keyText("tui.select.up")}/${keyText("tui.select.down")}`, "move")];
 
     if (this.state.results.length > pageSize) {
       parts.push(
-        formatKeybindingPair(this.keybindings, "tui.select.pageUp", "tui.select.pageDown", "pages")
+        rawKeyHint(`${keyText("tui.select.pageUp")}/${keyText("tui.select.pageDown")}`, "pages")
       );
     }
 
     parts.push(
-      formatKeybindingHint(this.keybindings, "tui.input.tab", "scope"),
-      formatKeybindingHint(this.keybindings, "tui.select.confirm", "restore"),
-      formatKeybindingHint(this.keybindings, "tui.select.cancel", "cancel")
+      keyHint("tui.input.tab", "scope"),
+      keyHint("tui.select.confirm", "restore"),
+      keyHint("tui.select.cancel", "cancel")
     );
 
-    return parts.join(" · ");
+    return parts.join(this.theme.fg("dim", " · "));
   }
 
   private highlightSelected(text: string): string {
@@ -1120,10 +1227,15 @@ export async function captureShortcutKey(
   ctx: ExtensionContext,
   options?: { currentValue?: string }
 ): Promise<string | undefined> {
+  if (ctx.mode !== "tui") {
+    return promptShortcutKey(ctx, options);
+  }
+
   return ctx.ui.custom<string | undefined>(
-    (tui, theme, _keybindings, done) => {
+    (tui, theme, keybindings, done) => {
       return new ShortcutCaptureDialog(theme, {
         ...(options?.currentValue ? { currentValue: options.currentValue } : {}),
+        keybindings: keybindings.getResolvedBindings(),
         requestRender: () => tui.requestRender(),
         onDone: done,
       });
@@ -1139,6 +1251,43 @@ export async function captureShortcutKey(
   );
 }
 
+// ctx.ui.custom() resolves to undefined outside the TUI (e.g. RPC clients), so ask for the key as
+// text there instead of silently treating the capture as cancelled.
+async function promptShortcutKey(
+  ctx: ExtensionContext,
+  options?: { currentValue?: string }
+): Promise<string | undefined> {
+  const typed = await ctx.ui.input(
+    "Message Recall shortcut (e.g. alt+r, ctrl+alt+r)",
+    options?.currentValue ?? DEFAULT_SHORTCUT_KEY
+  );
+  if (!typed?.trim()) {
+    return undefined;
+  }
+
+  const validation = validateShortcutKey(typed, readFallbackKeybindings());
+  if (!validation.normalized) {
+    ctx.ui.notify(validation.error ?? "That shortcut is not valid.", "error");
+    return undefined;
+  }
+
+  return validation.normalized;
+}
+
+/**
+ * Keybindings to validate against when Pi's resolved bindings are not available (outside the TUI):
+ * Pi's default reserved app.* keys plus the tui.* bindings pi-tui falls back to.
+ */
+function readFallbackKeybindings(): KeybindingsConfig {
+  let tuiKeybindings: KeybindingsConfig = {};
+  try {
+    tuiKeybindings = getKeybindings().getResolvedBindings();
+  } catch {
+    // Keep the app.* defaults alone.
+  }
+  return { ...getDefaultReservedAppKeybindings(), ...tuiKeybindings };
+}
+
 class ShortcutCaptureDialog implements Component {
   private hint = "Press a shortcut. Esc cancels.";
 
@@ -1146,6 +1295,7 @@ class ShortcutCaptureDialog implements Component {
     private readonly theme: DialogTheme,
     private readonly callbacks: {
       currentValue?: string;
+      keybindings?: KeybindingsConfig;
       requestRender: () => void;
       onDone: (value: string | undefined) => void;
     }
@@ -1185,7 +1335,7 @@ class ShortcutCaptureDialog implements Component {
     }
 
     if (parsed === "backspace" || parsed === "delete") {
-      const validation = validateShortcutKey(DEFAULT_SHORTCUT_KEY);
+      const validation = validateShortcutKey(DEFAULT_SHORTCUT_KEY, this.callbacks.keybindings);
       if (validation.normalized) {
         this.callbacks.onDone(validation.normalized);
         return;
@@ -1196,7 +1346,7 @@ class ShortcutCaptureDialog implements Component {
       return;
     }
 
-    const validation = validateShortcutKey(parsed);
+    const validation = validateShortcutKey(parsed, this.callbacks.keybindings);
     if (validation.normalized) {
       this.callbacks.onDone(validation.normalized);
       return;
@@ -1262,11 +1412,16 @@ async function toggleShortcut(
 ): Promise<RecallSettings | undefined> {
   if (settings.shortcutEnabled) {
     const nextSettings = { ...settings, shortcutEnabled: false };
-    ctx.ui.notify("Recall shortcut disabled. Reload to apply the change.", "info");
+    ctx.ui.notify("Recall shortcut disabled.", "info");
     return nextSettings;
   }
 
-  ctx.ui.notify("Press the shortcut you want to enable for Message Recall.", "info");
+  ctx.ui.notify(
+    ctx.mode === "tui"
+      ? "Press the shortcut you want to enable for Message Recall."
+      : "Enter the shortcut you want to enable for Message Recall.",
+    "info"
+  );
   const captured = await captureShortcutKey(ctx, {
     currentValue: normalizeShortcutKey(settings.shortcutKey) ?? settings.shortcutKey,
   });
@@ -1279,7 +1434,7 @@ async function toggleShortcut(
     shortcutEnabled: true,
     shortcutKey: captured,
   };
-  ctx.ui.notify("Recall shortcut enabled. Reload to apply the change.", "info");
+  ctx.ui.notify(`Recall shortcut enabled: ${formatShortcutKey(captured)}.`, "info");
   return nextSettings;
 }
 
@@ -1352,8 +1507,8 @@ function formatMessageDescription(message: RecallMessage): string {
   return parts.join(" · ");
 }
 
-function formatRelativeTime(timestamp: number): string {
-  const deltaMs = Math.max(0, Date.now() - timestamp);
+export function formatRelativeTime(timestamp: number, now = Date.now()): string {
+  const deltaMs = Math.max(0, now - timestamp);
   const minute = 60_000;
   const hour = 60 * minute;
   const day = 24 * hour;
@@ -1375,13 +1530,25 @@ function formatRelativeTime(timestamp: number): string {
     return `${Math.floor(deltaMs / day)}d ago`;
   }
 
-  return new Date(timestamp).toISOString().slice(0, 10);
+  // Local calendar date: toISOString() is UTC and can be a day off from what the user expects.
+  const date = new Date(timestamp);
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const dayOfMonth = String(date.getDate()).padStart(2, "0");
+  return `${date.getFullYear()}-${month}-${dayOfMonth}`;
 }
 
-function compactPath(path: string): string {
-  const home = homedir();
-  if (path.startsWith(home)) {
-    return `~${path.slice(home.length)}`;
+export function compactPath(path: string, home = homedir()): string {
+  if (!home) {
+    return path;
+  }
+
+  if (path === home) {
+    return "~";
+  }
+
+  const homePrefix = home.endsWith(sep) ? home : `${home}${sep}`;
+  if (path.startsWith(homePrefix)) {
+    return `~${sep}${path.slice(homePrefix.length)}`;
   }
 
   return path;
@@ -1403,18 +1570,9 @@ function renderDialogBox(theme: DialogTheme, innerWidth: number, lines: string[]
   const bottom = theme.fg("borderAccent", `╰${"─".repeat(innerWidth)}╯`);
   const middle = lines.map(
     (line) =>
-      `${theme.fg("borderAccent", "│")}${padAnsi(truncateToWidth(line, innerWidth), innerWidth)}${theme.fg("borderAccent", "│")}`
+      `${theme.fg("borderAccent", "│")}${truncateToWidth(line, innerWidth, "...", true)}${theme.fg("borderAccent", "│")}`
   );
   return [top, ...middle, bottom];
-}
-
-function padAnsi(text: string, width: number): string {
-  const currentWidth = visibleWidth(text);
-  if (currentWidth >= width) {
-    return text;
-  }
-
-  return `${text}${" ".repeat(width - currentWidth)}`;
 }
 
 function fitBlockLines(lines: string[], lineCount: number): string[] {
@@ -1427,34 +1585,4 @@ function fitBlockLines(lines: string[], lineCount: number): string[] {
     next.push("");
   }
   return next;
-}
-
-type DialogKeybinding = Parameters<KeybindingsManager["getKeys"]>[0];
-
-function formatKeybindingPair(
-  keybindings: KeybindingsManager,
-  first: DialogKeybinding,
-  second: DialogKeybinding,
-  description: string
-): string {
-  return `${formatKeyLabelList(keybindings, first)}/${formatKeyLabelList(keybindings, second)} ${description}`;
-}
-
-function formatKeybindingHint(
-  keybindings: KeybindingsManager,
-  keybinding: DialogKeybinding,
-  description: string
-): string {
-  return `${formatKeyLabelList(keybindings, keybinding)} ${description}`;
-}
-
-function formatKeyLabelList(keybindings: KeybindingsManager, keybinding: DialogKeybinding): string {
-  return keybindings.getKeys(keybinding).map(formatKeyLabel).join("/");
-}
-
-function formatKeyLabel(key: string): string {
-  return formatShortcutKey(key)
-    .replace("PageUp", "PgUp")
-    .replace("PageDown", "PgDn")
-    .replace("Escape", "Esc");
 }
