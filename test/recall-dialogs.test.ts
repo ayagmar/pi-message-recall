@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -171,6 +171,46 @@ void test("captureShortcutKey asks for the key as text outside the TUI", async (
 
   assert.equal(await captureShortcutKey(createCtx(undefined)), undefined);
   assert.equal(customCalls, 0);
+
+  // Pi's default reserved keys are refused here too, not only in the TUI capture dialog.
+  assert.equal(await captureShortcutKey(createCtx("ctrl+c")), undefined);
+  assert.match(notifications.at(-1) ?? "", /Ctrl\+C is reserved by Pi/);
+  assert.equal(await captureShortcutKey(createCtx("ctrl+k")), undefined);
+  assert.match(notifications.at(-1) ?? "", /reserved by Pi for tui\.editor\.deleteToLineEnd/);
+});
+
+void test("the settings flow refuses keys Pi reserves outside the TUI", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-dialogs-"));
+  const settingsPath = join(root, "settings.json");
+  const notifications: string[] = [];
+  const answers = ["Shortcut · Disabled", undefined];
+  const ctx = {
+    mode: "rpc",
+    hasUI: true,
+    ui: {
+      select: async () => answers.shift(),
+      input: async () => "ctrl+d",
+      notify: (message: string) => {
+        notifications.push(message);
+      },
+    },
+  } as unknown as ExtensionContext;
+
+  try {
+    const result = await openRecallSettingsFlow(ctx, {
+      settings: { ...createRecallSettings(), shortcutEnabled: false },
+      settingsPath,
+    });
+
+    assert.equal(result, undefined);
+    assert.equal(existsSync(settingsPath), false);
+    assert.deepEqual(notifications, [
+      "Enter the shortcut you want to enable for Message Recall.",
+      "Ctrl+D is reserved by Pi for app.exit. Choose another shortcut.",
+    ]);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 void test("the shortcut capture dialog refuses keys Pi reserves", async () => {

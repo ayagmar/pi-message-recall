@@ -112,6 +112,39 @@ const PI_RESERVED_KEYBINDINGS = new Set<string>([
   "tui.editor.deleteToLineEnd",
 ]);
 
+/**
+ * Pi 1.0.1's default keys for the reserved app.* actions (KEYBINDINGS in pi-coding-agent's
+ * core/keybindings.ts, which extensions cannot build at runtime). Outside the TUI Pi never installs
+ * its keybindings, so these stand in to reject reserved keys there. Custom remaps from
+ * keybindings.json are not visible outside the TUI, which is why session_start still reports
+ * conflicts. Keep in sync with Pi.
+ */
+export function getDefaultReservedAppKeybindings(
+  platform: NodeJS.Platform = process.platform,
+  env: NodeJS.ProcessEnv = process.env
+): KeybindingsConfig {
+  // Mirrors useWindowsKeybindings() in Pi: Windows itself, and Linux under WSL.
+  const windowsKeybindings =
+    platform === "win32" ||
+    (platform === "linux" && Boolean(env.WSL_DISTRO_NAME || env.WSL_INTEROP));
+
+  return {
+    "app.interrupt": "escape",
+    "app.clear": "ctrl+c",
+    "app.exit": "ctrl+d",
+    "app.suspend": platform === "win32" ? [] : "ctrl+z",
+    "app.thinking.cycle": "shift+tab",
+    "app.model.cycleForward": "ctrl+p",
+    "app.model.cycleBackward": windowsKeybindings ? "alt+p" : "shift+ctrl+p",
+    "app.model.select": "ctrl+l",
+    "app.tools.expand": "ctrl+o",
+    "app.thinking.toggle": "ctrl+t",
+    "app.editor.external": "ctrl+g",
+    "app.message.copy": "ctrl+x",
+    "app.message.followUp": windowsKeybindings ? "ctrl+q" : "alt+enter",
+  };
+}
+
 interface ShortcutParts {
   modifiers: string[];
   key: string;

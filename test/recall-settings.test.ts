@@ -14,6 +14,7 @@ import {
 } from "../src/recall-settings.js";
 import {
   findReservedShortcutConflict,
+  getDefaultReservedAppKeybindings,
   getShortcutStatus,
   validateShortcutKey,
 } from "../src/recall-shortcut.js";
@@ -155,6 +156,24 @@ void test("shortcut validation rejects keys Pi reserves for its own actions", ()
   assert.equal(validateShortcutKey("ctrl+s", keybindings).normalized, "ctrl+s");
   assert.equal(validateShortcutKey("ctrl+x").normalized, "ctrl+x");
   assert.equal(findReservedShortcutConflict("alt+r", keybindings), undefined);
+});
+
+void test("Pi's default reserved app keys follow its platform-specific defaults", () => {
+  const linux = getDefaultReservedAppKeybindings("linux", {});
+  assert.equal(findReservedShortcutConflict("alt+enter", linux), "app.message.followUp");
+  assert.equal(findReservedShortcutConflict("ctrl+shift+p", linux), "app.model.cycleBackward");
+  assert.equal(findReservedShortcutConflict("ctrl+z", linux), "app.suspend");
+  assert.equal(findReservedShortcutConflict("alt+p", linux), undefined);
+  assert.equal(findReservedShortcutConflict("alt+r", linux), undefined);
+
+  const wsl = getDefaultReservedAppKeybindings("linux", { WSL_DISTRO_NAME: "Ubuntu" });
+  assert.equal(findReservedShortcutConflict("ctrl+q", wsl), "app.message.followUp");
+  assert.equal(findReservedShortcutConflict("alt+p", wsl), "app.model.cycleBackward");
+  assert.equal(findReservedShortcutConflict("alt+enter", wsl), undefined);
+
+  const windows = getDefaultReservedAppKeybindings("win32", {});
+  assert.equal(findReservedShortcutConflict("ctrl+z", windows), undefined);
+  assert.equal(findReservedShortcutConflict("ctrl+q", windows), "app.message.followUp");
 });
 
 void test("getShortcutStatus flags a saved shortcut that Pi reserves", () => {

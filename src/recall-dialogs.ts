@@ -10,6 +10,7 @@ import {
 import {
   type Component,
   type Focusable,
+  getKeybindings,
   Input,
   type KeybindingsConfig,
   parseKey,
@@ -33,7 +34,12 @@ import {
   formatRecallScope,
   saveRecallSettings,
 } from "./recall-settings.js";
-import { formatShortcutKey, normalizeShortcutKey, validateShortcutKey } from "./recall-shortcut.js";
+import {
+  formatShortcutKey,
+  getDefaultReservedAppKeybindings,
+  normalizeShortcutKey,
+  validateShortcutKey,
+} from "./recall-shortcut.js";
 import {
   type RecallLoadProgress,
   type RecallMessage,
@@ -1256,13 +1262,27 @@ async function promptShortcutKey(
     return undefined;
   }
 
-  const validation = validateShortcutKey(typed);
+  const validation = validateShortcutKey(typed, readFallbackKeybindings());
   if (!validation.normalized) {
     ctx.ui.notify(validation.error ?? "That shortcut is not valid.", "error");
     return undefined;
   }
 
   return validation.normalized;
+}
+
+/**
+ * Keybindings to validate against when Pi's resolved bindings are not available (outside the TUI):
+ * Pi's default reserved app.* keys plus the tui.* bindings pi-tui falls back to.
+ */
+function readFallbackKeybindings(): KeybindingsConfig {
+  let tuiKeybindings: KeybindingsConfig = {};
+  try {
+    tuiKeybindings = getKeybindings().getResolvedBindings();
+  } catch {
+    // Keep the app.* defaults alone.
+  }
+  return { ...getDefaultReservedAppKeybindings(), ...tuiKeybindings };
 }
 
 class ShortcutCaptureDialog implements Component {
@@ -1393,7 +1413,12 @@ async function toggleShortcut(
     return nextSettings;
   }
 
-  ctx.ui.notify("Press the shortcut you want to enable for Message Recall.", "info");
+  ctx.ui.notify(
+    ctx.mode === "tui"
+      ? "Press the shortcut you want to enable for Message Recall."
+      : "Enter the shortcut you want to enable for Message Recall.",
+    "info"
+  );
   const captured = await captureShortcutKey(ctx, {
     currentValue: normalizeShortcutKey(settings.shortcutKey) ?? settings.shortcutKey,
   });
