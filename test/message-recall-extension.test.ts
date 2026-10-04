@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { KeybindingsManager, setKeybindings, TUI_KEYBINDINGS } from "@earendil-works/pi-tui";
 import { createMessageRecallExtension } from "../src/index.js";
 import { EXTENSION_COMMAND } from "../src/recall-constants.js";
 import { saveRecallSettings } from "../src/recall-settings.js";
@@ -296,5 +297,25 @@ void test("a saved shortcut that Pi reserves is reported at session start and in
     assert.match(statusCtx.notifications.at(-1) ?? "", /Ctrl\+X \(conflicts with Pi: /);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+void test("/recall status names the configured scope key in the TUI and Tab elsewhere", async () => {
+  setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS, { "tui.input.tab": "ctrl+t" }));
+
+  try {
+    const harness = createHarness();
+    createMessageRecallExtension(harness.pi, { settingsPath: missingSettingsPath });
+    const command = harness.commands.get(EXTENSION_COMMAND);
+
+    const tuiCtx = createCommandContext({ mode: "tui" });
+    await command?.handler("status", tuiCtx);
+    assert.match(tuiCtx.notifications.at(-1) ?? "", /Picker scope toggle: ctrl\+t$/m);
+
+    const rpcCtx = createCommandContext({ mode: "rpc" });
+    await command?.handler("status", rpcCtx);
+    assert.match(rpcCtx.notifications.at(-1) ?? "", /Picker scope toggle: Tab$/m);
+  } finally {
+    setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS));
   }
 });

@@ -92,6 +92,8 @@ export function buildRecallStatusText(input: {
   settings: RecallSettings;
   settingsPath: string;
   shortcutStatus: ShortcutStatus;
+  /** Key that toggles the picker scope; defaults to "Tab" when Pi's keybindings are not loaded. */
+  scopeToggleKey?: string | undefined;
 }): string {
   return [
     "## Message Recall",
@@ -99,7 +101,7 @@ export function buildRecallStatusText(input: {
     `- Default scope: ${formatRecallScope(input.settings.defaultScope)}`,
     `- Picker layout: ${formatRecallPickerLayout(input.settings.pickerLayout)}`,
     `- Shortcut: ${formatShortcutSummary(input.shortcutStatus)}`,
-    "- Picker scope toggle: Tab",
+    `- Picker scope toggle: ${input.scopeToggleKey ?? "Tab"}`,
     "- Search modes: empty = recent, quotes = exact phrase, re:<pattern> = regex",
     "- Recall is text-only and fills the editor without sending",
   ].join("\n");

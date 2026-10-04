@@ -136,6 +136,20 @@ void test("buildRecallStatusText includes the settings path and active shortcut 
   assert.match(text, /Shortcut: Alt\+R \(configured\)/);
 });
 
+void test("buildRecallStatusText names the given scope toggle key, defaulting to Tab", () => {
+  const input = {
+    settings: createRecallSettings(),
+    settingsPath: "/tmp/recall-settings.json",
+    shortcutStatus: { state: "active", key: "alt+r", label: "Alt+R" } as const,
+  };
+
+  assert.match(buildRecallStatusText(input), /Picker scope toggle: Tab$/m);
+  assert.match(
+    buildRecallStatusText({ ...input, scopeToggleKey: "ctrl+t" }),
+    /Picker scope toggle: ctrl\+t$/m
+  );
+});
+
 void test("shortcut validation rejects keys Pi reserves for its own actions", () => {
   const keybindings: KeybindingsConfig = {
     "app.message.copy": "ctrl+x",

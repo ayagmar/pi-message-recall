@@ -2,6 +2,7 @@ import {
   type ExtensionAPI,
   type ExtensionCommandContext,
   type ExtensionContext,
+  keyText,
 } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, type KeybindingsConfig } from "@earendil-works/pi-tui";
 import { getRecallArgumentCompletions, parseRecallCommandArgs } from "./recall-command.js";
@@ -135,6 +136,7 @@ export function createMessageRecallExtension(
                 settings,
                 settingsPath,
                 shortcutStatus: getRuntimeShortcutStatus(ctx),
+                scopeToggleKey: getScopeToggleKey(ctx),
               }),
               "info"
             );
@@ -193,6 +195,7 @@ async function handleSettingsCommand(
         settings: options.settings,
         settingsPath: options.settingsPath,
         shortcutStatus: getShortcutStatus(options.settings),
+        scopeToggleKey: getScopeToggleKey(ctx),
       }),
       "info"
     );
@@ -251,6 +254,11 @@ async function runRecallPicker(
     }
     throw error;
   }
+}
+
+// Pi's keybindings are only loaded in the interactive UI; elsewhere the status text keeps "Tab".
+function getScopeToggleKey(ctx: ExtensionContext): string | undefined {
+  return ctx.mode === "tui" ? keyText("tui.input.tab") : undefined;
 }
 
 function readPiKeybindings(): KeybindingsConfig | undefined {
