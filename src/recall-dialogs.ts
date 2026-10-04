@@ -1508,18 +1508,9 @@ function renderDialogBox(theme: DialogTheme, innerWidth: number, lines: string[]
   const bottom = theme.fg("borderAccent", `╰${"─".repeat(innerWidth)}╯`);
   const middle = lines.map(
     (line) =>
-      `${theme.fg("borderAccent", "│")}${padAnsi(truncateToWidth(line, innerWidth), innerWidth)}${theme.fg("borderAccent", "│")}`
+      `${theme.fg("borderAccent", "│")}${truncateToWidth(line, innerWidth, "...", true)}${theme.fg("borderAccent", "│")}`
   );
   return [top, ...middle, bottom];
-}
-
-function padAnsi(text: string, width: number): string {
-  const currentWidth = visibleWidth(text);
-  if (currentWidth >= width) {
-    return text;
-  }
-
-  return `${text}${" ".repeat(width - currentWidth)}`;
 }
 
 function fitBlockLines(lines: string[], lineCount: number): string[] {
