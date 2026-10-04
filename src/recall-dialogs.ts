@@ -1108,7 +1108,10 @@ class RecallPickerDialog implements Component, Focusable {
           ),
           this.theme.fg(
             "dim",
-            truncateToWidth("Press Enter to restore the highlighted prompt into the editor.", width)
+            truncateToWidth(
+              `Press ${keyText("tui.select.confirm")} to restore the highlighted prompt into the editor.`,
+              width
+            )
           ),
         ],
         previewLines

@@ -448,6 +448,37 @@ void test("the picker's empty state names the configured scope key", async () =>
   }
 });
 
+void test("the picker preview names the configured restore key", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-picker-"));
+  initTheme("dark");
+  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, { "tui.select.confirm": "ctrl+y" });
+  setKeybindings(keybindings);
+  const { ctx, getDialog } = createPickerContext(root, keybindings);
+
+  try {
+    const picker = openRecallPicker(ctx, {
+      initialQuery: "",
+      previousDraft: "",
+      settings: createRecallSettings(),
+      findRepoRoot: async () => undefined,
+    });
+    let output = "";
+    for (let attempt = 0; attempt < 100 && !output.includes("to restore the"); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      output = getDialog()?.render(120).join("\n") ?? "";
+    }
+
+    assert.match(output, /Press ctrl\+y to restore the highlighted prompt/);
+    assert.doesNotMatch(output, /Press Enter/);
+
+    getDialog()?.handleInput("\x1b");
+    assert.equal(await picker, undefined);
+  } finally {
+    setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
 void test("the picker opens before the git root lookup finishes, then offers Repo scope", async () => {
   const root = mkdtempSync(join(tmpdir(), "pi-message-recall-picker-"));
   initTheme("dark");
