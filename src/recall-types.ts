@@ -116,8 +116,11 @@ export interface RecallPickerOptions {
   initialQuery: string;
   previousDraft: string;
   settings: RecallSettings;
-  /** Resolves the git root of a cwd (undefined outside a repository). */
-  findRepoRoot(cwd: string): Promise<string | undefined>;
+  /**
+   * Resolves the git root of a cwd (undefined outside a repository). The picker calls it after it
+   * opens, so a slow git never delays the overlay; `signal` aborts when the picker closes.
+   */
+  findRepoRoot(cwd: string, signal?: AbortSignal): Promise<string | undefined>;
 }
 
 export interface RecallSettingsFlowResult {

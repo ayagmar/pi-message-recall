@@ -323,12 +323,13 @@ void test("toggling the shortcut leaves the reload notice to the extension", asy
   }
 });
 
-void test("the picker's empty state names the configured scope key", async () => {
-  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-picker-"));
-  initTheme("dark");
-  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, { "tui.input.tab": "ctrl+t" });
-  setKeybindings(keybindings);
-  let dialog: { render(width: number): string[]; handleInput(data: string): void } | undefined;
+type PickerDialog = { render(width: number): string[]; handleInput(data: string): void };
+
+function createPickerContext(
+  root: string,
+  keybindings: KeybindingsManager
+): { ctx: ExtensionContext; getDialog: () => PickerDialog | undefined } {
+  let dialog: PickerDialog | undefined;
   const ctx = {
     mode: "tui",
     hasUI: true,
@@ -348,7 +349,7 @@ void test("the picker's empty state names the configured scope key", async () =>
           theme: unknown,
           keybindings: unknown,
           done: (value: unknown) => void
-        ) => NonNullable<typeof dialog>,
+        ) => PickerDialog,
         _options: unknown
       ) =>
         new Promise((resolve) => {
@@ -369,6 +370,20 @@ void test("the picker's empty state names the configured scope key", async () =>
     },
   } as unknown as ExtensionContext;
 
+  return { ctx, getDialog: () => dialog };
+}
+
+function renderScopeLine(dialog: PickerDialog | undefined): string {
+  return dialog?.render(120).find((line) => line.includes("Scope ")) ?? "";
+}
+
+void test("the picker's empty state names the configured scope key", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-picker-"));
+  initTheme("dark");
+  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS, { "tui.input.tab": "ctrl+t" });
+  setKeybindings(keybindings);
+  const { ctx, getDialog } = createPickerContext(root, keybindings);
+
   try {
     const picker = openRecallPicker(ctx, {
       initialQuery: "",
@@ -379,16 +394,93 @@ void test("the picker's empty state names the configured scope key", async () =>
     let output = "";
     for (let attempt = 0; attempt < 100 && !output.includes("wider scope"); attempt += 1) {
       await new Promise((resolve) => setTimeout(resolve, 10));
-      output = dialog?.render(120).join("\n") ?? "";
+      output = getDialog()?.render(120).join("\n") ?? "";
     }
 
     assert.match(output, /Try ctrl\+t for a wider scope/);
     assert.doesNotMatch(output, /\bTab\b/);
 
-    dialog?.handleInput("\x1b");
+    getDialog()?.handleInput("\x1b");
     assert.equal(await picker, undefined);
   } finally {
     setKeybindings(new KeybindingsManager(TUI_KEYBINDINGS));
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+void test("the picker opens before the git root lookup finishes, then offers Repo scope", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-picker-"));
+  initTheme("dark");
+  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+  setKeybindings(keybindings);
+  const { ctx, getDialog } = createPickerContext(root, keybindings);
+  let resolveRepoRoot: (root: string | undefined) => void = () => undefined;
+  let lookupSignal: AbortSignal | undefined;
+
+  try {
+    const picker = openRecallPicker(ctx, {
+      initialQuery: "",
+      previousDraft: "",
+      settings: { ...createRecallSettings(), defaultScope: "repo" },
+      findRepoRoot: (cwd, signal) => {
+        assert.equal(cwd, root);
+        lookupSignal = signal;
+        return new Promise((resolve) => {
+          resolveRepoRoot = resolve;
+        });
+      },
+    });
+
+    // The overlay exists, and receives keys, while git is still running.
+    assert.ok(getDialog());
+    getDialog()?.handleInput("s");
+    assert.match(getDialog()?.render(120).join("\n") ?? "", /Search › > s/);
+    assert.doesNotMatch(renderScopeLine(getDialog()), /Repo/);
+    assert.match(renderScopeLine(getDialog()), / Project .*\[All\]/);
+
+    resolveRepoRoot(root);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // The configured default Repo scope is selected once the root is known.
+    assert.match(renderScopeLine(getDialog()), /\[Project\] +Repo +\[All\]/);
+
+    getDialog()?.handleInput("\x1b");
+    assert.equal(await picker, undefined);
+    assert.equal(lookupSignal?.aborted, true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+void test("the picker keeps a scope the user picked while the git root was resolving", async () => {
+  const root = mkdtempSync(join(tmpdir(), "pi-message-recall-picker-"));
+  initTheme("dark");
+  const keybindings = new KeybindingsManager(TUI_KEYBINDINGS);
+  setKeybindings(keybindings);
+  const { ctx, getDialog } = createPickerContext(root, keybindings);
+  let resolveRepoRoot: (root: string | undefined) => void = () => undefined;
+
+  try {
+    const picker = openRecallPicker(ctx, {
+      initialQuery: "",
+      previousDraft: "",
+      settings: { ...createRecallSettings(), defaultScope: "repo" },
+      findRepoRoot: () =>
+        new Promise((resolve) => {
+          resolveRepoRoot = resolve;
+        }),
+    });
+
+    getDialog()?.handleInput("\t");
+    assert.match(renderScopeLine(getDialog()), /\[Project\] +All /);
+
+    resolveRepoRoot(root);
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    assert.match(renderScopeLine(getDialog()), /\[Project\] +\[Repo\] +All /);
+
+    getDialog()?.handleInput("\x1b");
+    assert.equal(await picker, undefined);
+  } finally {
     rmSync(root, { recursive: true, force: true });
   }
 });

@@ -143,6 +143,46 @@ void test("the shortcut opens recall only when Pi is idle", async () => {
   assert.match(busyCtx.notifications[0] ?? "", /wait for pi to finish/i);
 });
 
+void test("a second shortcut press while the picker is open does not stack another picker", async () => {
+  const harness = createHarness();
+  let pickerCalls = 0;
+  const openPickers: (() => void)[] = [];
+  const closePickers = () => {
+    for (const close of openPickers.splice(0)) {
+      close();
+    }
+  };
+  createMessageRecallExtension(harness.pi, {
+    settingsPath: missingSettingsPath,
+    openPicker: () => {
+      pickerCalls += 1;
+      return new Promise((resolve) => {
+        openPickers.push(() => resolve(undefined));
+      });
+    },
+  });
+
+  const shortcut = harness.shortcuts.get("alt+r");
+  const command = harness.commands.get(EXTENSION_COMMAND);
+  assert.ok(shortcut && command);
+
+  const ctx = createShortcutContext({ editorText: "draft" });
+  const first = shortcut.handler(ctx);
+  const second = shortcut.handler(ctx);
+  const viaCommand = command.handler("", createCommandContext({ editorText: "draft" }));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(pickerCalls, 1);
+
+  closePickers();
+  await Promise.all([first, second, viaCommand]);
+
+  const reopened = shortcut.handler(ctx);
+  assert.equal(pickerCalls, 2);
+  closePickers();
+  await reopened;
+  assert.deepEqual(ctx.notifications, []);
+});
+
 void test("/recall explains that the picker needs the TUI in RPC mode", async () => {
   const harness = createHarness();
   let pickerOpened = false;

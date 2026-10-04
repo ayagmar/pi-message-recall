@@ -45,12 +45,31 @@ export function createMessageRecallExtension(
   const showPicker = options?.openPicker ?? openRecallPicker;
   const showSettings = options?.openSettings ?? openRecallSettingsFlow;
   const readKeybindings = options?.getKeybindings ?? readPiKeybindings;
-  const findRepoRoot = (cwd: string) =>
-    findGitRepoRoot((command, args, execOptions) => pi.exec(command, args, execOptions), cwd);
+  const findRepoRoot = (cwd: string, signal?: AbortSignal) =>
+    findGitRepoRoot(
+      (command, args, execOptions) => pi.exec(command, args, execOptions),
+      cwd,
+      signal
+    );
   const getRuntimeShortcutStatus = (ctx: ExtensionContext) =>
     getShortcutStatus(settings, ctx.mode === "tui" ? readKeybindings() : undefined);
 
   let settings = loadRecallSettings(settingsPath);
+  // Set while a picker is open so a repeated shortcut or /recall cannot stack a second overlay
+  // that would snapshot (and later restore) a stale draft.
+  let pickerOpen = false;
+  const openPickerOnce = async (ctx: ExtensionContext, initialQuery?: string): Promise<void> => {
+    if (pickerOpen) {
+      return;
+    }
+
+    pickerOpen = true;
+    try {
+      await runRecallPicker(ctx, showPicker, { settings, findRepoRoot }, initialQuery);
+    } finally {
+      pickerOpen = false;
+    }
+  };
   const startupShortcutStatus = getShortcutStatus(settings);
   let notifiedShortcutIssue = false;
 
@@ -68,7 +87,7 @@ export function createMessageRecallExtension(
         }
 
         try {
-          await runRecallPicker(ctx, showPicker, { settings, findRepoRoot });
+          await openPickerOnce(ctx);
         } catch (error) {
           ctx.ui.notify(error instanceof Error ? error.message : String(error), "error");
         }
@@ -145,12 +164,7 @@ export function createMessageRecallExtension(
             }
 
             await ctx.waitForIdle();
-            await runRecallPicker(
-              ctx,
-              showPicker,
-              { settings, findRepoRoot },
-              command.initialQuery
-            );
+            await openPickerOnce(ctx, command.initialQuery);
             return;
           }
         }

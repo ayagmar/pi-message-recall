@@ -50,12 +50,11 @@ export async function openRecallPicker(
   ctx: ExtensionContext,
   options: RecallPickerOptions
 ): Promise<RecallMessage | undefined> {
-  // Resolved once per open: it decides whether Repo scope is offered and filters its sessions.
-  const repoRoot = await options.findRepoRoot(ctx.cwd);
-  const availableScopes = getAvailableScopes(repoRoot);
-  const initialScope = resolveRecallScope(options.settings.defaultScope, availableScopes);
   const layoutPreset = getRecallPickerLayoutPreset(options.settings.pickerLayout);
 
+  // Nothing is awaited before ctx.ui.custom(): keys typed right after the shortcut must reach the
+  // picker's search field, not the editor whose draft was already captured. The git root (which
+  // decides whether Repo scope is offered) is resolved by the dialog once it is open.
   return ctx.ui.custom<RecallMessage | undefined>(
     (tui, theme, keybindings, done) => {
       return new RecallPickerDialog(
@@ -63,8 +62,8 @@ export async function openRecallPicker(
         keybindings,
         {
           initialQuery: options.initialQuery,
-          initialScope,
-          availableScopes,
+          defaultScope: options.settings.defaultScope,
+          findRepoRoot: (signal) => options.findRepoRoot(ctx.cwd, signal),
           layoutPreference: options.settings.pickerLayout,
           currentCwd: ctx.cwd,
           currentSessionDir: ctx.sessionManager.getSessionDir(),
@@ -74,7 +73,6 @@ export async function openRecallPicker(
           currentSessionEntries: ctx.sessionManager.getEntries() as SessionEntryLike[],
           currentSessionFile: ctx.sessionManager.getSessionFile() ?? undefined,
           currentSessionName: ctx.sessionManager.getSessionName() ?? undefined,
-          repoRoot,
         },
         {
           onDone: (value) => {
@@ -487,6 +485,10 @@ class RecallPickerDialog implements Component, Focusable {
   private selectedMessageId: string | undefined;
   private selectedIndex = 0;
   private loadAbort?: AbortController;
+  private readonly repoRootAbort = new AbortController();
+  private repoRoot: string | undefined;
+  private availableScopes: RecallScope[] = getAvailableScopes(undefined);
+  private scopeChangedByUser = false;
   private disposed = false;
   private _focused = false;
 
@@ -498,15 +500,14 @@ class RecallPickerDialog implements Component, Focusable {
     private readonly keybindings: KeybindingsManager,
     private readonly options: {
       initialQuery: string;
-      initialScope: RecallScope;
-      availableScopes: RecallScope[];
+      defaultScope: RecallScope;
+      findRepoRoot: (signal: AbortSignal) => Promise<string | undefined>;
       layoutPreference: RecallPickerLayoutPreference;
       currentCwd: string;
       currentSessionDir: string;
       currentSessionEntries: SessionEntryLike[];
       currentSessionFile: string | undefined;
       currentSessionName: string | undefined;
-      repoRoot: string | undefined;
     },
     private readonly callbacks: {
       onDone: (value: RecallMessage | undefined) => void;
@@ -515,7 +516,8 @@ class RecallPickerDialog implements Component, Focusable {
       getTerminalColumns: () => number;
     }
   ) {
-    this.scope = options.initialScope;
+    // Repo scope is only offered once the git root is known; until then start in Project.
+    this.scope = resolveRecallScope(options.defaultScope, this.availableScopes);
     this.searchInput = createSearchInput(options.initialQuery);
     this.searchInput.focused = true;
     this.state = {
@@ -535,6 +537,7 @@ class RecallPickerDialog implements Component, Focusable {
     this.refreshResults();
 
     void this.reloadScope(this.scope);
+    void this.resolveRepoRoot();
   }
 
   get focused(): boolean {
@@ -579,6 +582,7 @@ class RecallPickerDialog implements Component, Focusable {
   }
   handleInput(data: string): void {
     if (this.keybindings.matches(data, "tui.input.tab")) {
+      this.scopeChangedByUser = true;
       void this.reloadScope(this.nextScope());
       return;
     }
@@ -621,6 +625,31 @@ class RecallPickerDialog implements Component, Focusable {
     this.callbacks.requestRender();
   }
 
+  private async resolveRepoRoot(): Promise<void> {
+    let repoRoot: string | undefined;
+    try {
+      repoRoot = await this.options.findRepoRoot(this.repoRootAbort.signal);
+    } catch {
+      repoRoot = undefined;
+    }
+
+    if (this.disposed || !repoRoot) {
+      return;
+    }
+
+    this.repoRoot = repoRoot;
+    this.availableScopes = getAvailableScopes(repoRoot);
+    if (!this.scopeChangedByUser) {
+      const defaultScope = resolveRecallScope(this.options.defaultScope, this.availableScopes);
+      if (defaultScope !== this.scope) {
+        void this.reloadScope(defaultScope);
+        return;
+      }
+    }
+
+    this.callbacks.requestRender();
+  }
+
   private async reloadScope(scope: RecallScope): Promise<void> {
     this.scope = scope;
     this.loadAbort?.abort();
@@ -657,7 +686,7 @@ class RecallPickerDialog implements Component, Focusable {
           ...(this.options.currentSessionName
             ? { currentSessionName: this.options.currentSessionName }
             : {}),
-          ...(this.options.repoRoot ? { repoRoot: this.options.repoRoot } : {}),
+          ...(this.repoRoot ? { repoRoot: this.repoRoot } : {}),
         },
         {
           onBatch: (messages, progress) => {
@@ -706,6 +735,7 @@ class RecallPickerDialog implements Component, Focusable {
 
     this.disposed = true;
     this.loadAbort?.abort();
+    this.repoRootAbort.abort();
     this.callbacks.onDone(value);
   }
 
@@ -883,9 +913,9 @@ class RecallPickerDialog implements Component, Focusable {
   }
 
   private nextScope(): RecallScope {
-    const currentIndex = this.options.availableScopes.indexOf(this.scope);
-    const nextIndex = (currentIndex + 1) % this.options.availableScopes.length;
-    return this.options.availableScopes[nextIndex] ?? this.scope;
+    const currentIndex = this.availableScopes.indexOf(this.scope);
+    const nextIndex = (currentIndex + 1) % this.availableScopes.length;
+    return this.availableScopes[nextIndex] ?? this.scope;
   }
 
   private renderHeaderLine(width: number): string {
@@ -914,9 +944,7 @@ class RecallPickerDialog implements Component, Focusable {
 
   private renderScopeLine(width: number): string {
     const prefix = this.theme.fg("dim", "Scope ");
-    const pills = this.options.availableScopes
-      .map((scope) => this.renderScopePill(scope))
-      .join(" ");
+    const pills = this.availableScopes.map((scope) => this.renderScopePill(scope)).join(" ");
     return `${prefix}${truncateToWidth(pills, Math.max(1, width - visibleWidth(prefix)))}`;
   }
 
