@@ -6,6 +6,7 @@ import test from "node:test";
 import { createMessageRecallExtension } from "../src/index.js";
 import { EXTENSION_COMMAND } from "../src/recall-constants.js";
 import { saveRecallSettings } from "../src/recall-settings.js";
+import { type RecallPickerOptions } from "../src/recall-types.js";
 import { createCommandContext, createHarness, createShortcutContext } from "./test-harness.js";
 
 // Never read the real ~/.pi agent settings: a customised shortcut there would break these tests.
@@ -51,11 +52,12 @@ void test("extension skips shortcut registration when the saved key is invalid",
 
 void test("/recall restores the previous draft when the picker is cancelled", async () => {
   const harness = createHarness();
+  // Captured rather than asserted inside the stub: /recall turns a throw there into a notification.
+  let received: RecallPickerOptions | undefined;
   createMessageRecallExtension(harness.pi, {
     settingsPath: missingSettingsPath,
     openPicker: async (_ctx, options) => {
-      assert.equal(options.initialQuery, "existing draft");
-      assert.equal(options.previousDraft, "existing draft");
+      received = options;
       return undefined;
     },
   });
@@ -66,6 +68,10 @@ void test("/recall restores the previous draft when the picker is cancelled", as
   const ctx = createCommandContext({ editorText: "existing draft" });
   await command?.handler("", ctx);
 
+  assert.ok(received, "the picker was opened");
+  assert.equal(received.initialQuery, "existing draft");
+  assert.equal(received.previousDraft, "existing draft");
+  assert.deepEqual(ctx.notifications, []);
   assert.equal(ctx.waitForIdleCalls, 1);
   assert.deepEqual(ctx.setEditorTextCalls, []);
   assert.equal(ctx.ui.getEditorText(), "existing draft");
